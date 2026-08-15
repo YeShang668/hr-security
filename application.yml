@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: hr-security
+  # 加载同目录下未提交的 application-local.yml（放密钥等敏感配置，不入 git）
+  config:
+    import: optional:file:./application-local.yml
+  datasource:
+    # 开发环境：本地 MySQL root 空密码；有密码时请在 application-local.yml 覆盖
+    url: jdbc:mysql://localhost:3306/hr_security?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: ""
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期打印 SQL，上线前关闭
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+
+jwt:
+  # token 有效期（小时）
+  expire-hours: 24
+  # 密钥本身在 application-local.yml 中配置（环境变量可覆盖，见 JwtUtil）

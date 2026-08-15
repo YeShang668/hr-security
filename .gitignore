@@ -1,0 +1,15 @@
+# Maven
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 本地配置（含密钥/数据库账号，禁止提交）
+application-local.yml
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
