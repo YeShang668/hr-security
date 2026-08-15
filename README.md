@@ -16,7 +16,7 @@ mysql -u root < sql/init.sql
 mvn spring-boot:run
 ```
 
-启动后访问 `http://localhost:8080`，接口见下方。
+接口测试：**IDEA 打开根目录 `api-test.http`，按顺序运行**（注册 → 登录，token 自动保存 → /me）。启动后访问 `http://localhost:8080`，接口见下方。
 
 ## 本周接口
 
