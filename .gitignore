@@ -13,3 +13,6 @@ application-local.yml
 *.log
 .DS_Store
 Thumbs.db
+
+# 本地端到端测试脚本与登录 token（含 JWT，禁止提交）
+test-payloads/

@@ -1,6 +1,7 @@
 package com.hrsecurity.common;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -18,6 +19,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public Result<Void> handleBusinessException(BusinessException e) {
         return Result.error(e.getCode(), e.getMessage());
+    }
+
+    /**
+     * 方法级鉴权失败（@PreAuthorize 校验不通过时抛出的异常）。
+     * 必须放在 catch-all 之前单独处理，否则会被 Exception 兜底转成 500。
+     */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public Result<Void> handleAccessDenied(AuthorizationDeniedException e) {
+        return Result.error(ResultCode.FORBIDDEN.getCode(), "无权限访问");
     }
 
     /** 参数校验失败（@Valid 触发）：取第一个字段的错误提示 */

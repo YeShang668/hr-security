@@ -7,23 +7,38 @@ import com.hrsecurity.dto.LoginDTO;
 import com.hrsecurity.dto.LoginResponse;
 import com.hrsecurity.dto.RegisterDTO;
 import com.hrsecurity.dto.UserInfoVO;
+import com.hrsecurity.entity.SysRole;
 import com.hrsecurity.entity.SysUser;
+import com.hrsecurity.entity.SysUserRole;
+import com.hrsecurity.mapper.SysRoleMapper;
 import com.hrsecurity.mapper.SysUserMapper;
+import com.hrsecurity.mapper.SysUserRoleMapper;
 import com.hrsecurity.security.JwtUtil;
 import com.hrsecurity.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
+    /** 注册用户的默认角色（由种子数据保证存在） */
+    private static final String DEFAULT_ROLE = "EMPLOYEE";
+
     private final SysUserMapper userMapper;
+    private final SysRoleMapper roleMapper;
+    private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
 
     @Override
+    @Transactional
     public void register(RegisterDTO dto) {
         // 1. 用户名唯一校验（数据库层面也有 UNIQUE 索引兜底）
         Long count = userMapper.selectCount(
@@ -39,6 +54,17 @@ public class AuthServiceImpl implements AuthService {
         user.setNickname(dto.getNickname());
         user.setStatus(1);
         userMapper.insert(user);
+
+        // 3. 默认分配 EMPLOYEE 角色（普通注册用户没有管理员权限）
+        SysRole defaultRole = roleMapper.selectOne(
+                new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleCode, DEFAULT_ROLE));
+        if (defaultRole == null) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "系统默认角色未配置，请联系管理员");
+        }
+        SysUserRole userRole = new SysUserRole();
+        userRole.setUserId(user.getId());
+        userRole.setRoleId(defaultRole.getId());
+        userRoleMapper.insert(userRole);
     }
 
     @Override
@@ -55,11 +81,13 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "账号已被禁用，请联系管理员");
         }
 
-        // 4. 签发 JWT，返回 token + 用户信息
-        String token = jwtUtil.createToken(user.getId(), user.getUsername());
+        // 4. 签发 JWT（角色写进 claims），返回 token + 用户信息 + 角色
+        List<String> roles = getRoleCodes(user.getId());
+        String token = jwtUtil.createToken(user.getId(), user.getUsername(), roles);
         return LoginResponse.builder()
                 .token(token)
-                .user(toUserInfo(user))
+                .user(toUserInfo(user, roles))
+                .roles(roles)
                 .build();
     }
 
@@ -69,15 +97,29 @@ public class AuthServiceImpl implements AuthService {
         if (user == null) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "用户不存在");
         }
-        return toUserInfo(user);
+        return toUserInfo(user, getRoleCodes(userId));
+    }
+
+    /** 查用户绑定的角色编码列表 */
+    private List<String> getRoleCodes(Long userId) {
+        List<Long> roleIds = userRoleMapper.selectList(
+                        new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId))
+                .stream().map(SysUserRole::getRoleId).collect(Collectors.toList());
+        if (roleIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return roleMapper.selectBatchIds(roleIds).stream()
+                .map(SysRole::getRoleCode)
+                .collect(Collectors.toList());
     }
 
     /** 实体 → 出参 VO，杜绝密码泄露 */
-    private UserInfoVO toUserInfo(SysUser user) {
+    private UserInfoVO toUserInfo(SysUser user, List<String> roles) {
         return UserInfoVO.builder()
                 .id(user.getId())
                 .username(user.getUsername())
                 .nickname(user.getNickname())
+                .roles(roles)
                 .createdAt(user.getCreatedAt())
                 .build();
     }

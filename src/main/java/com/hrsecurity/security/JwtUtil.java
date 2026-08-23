@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 
 /**
  * JWT 工具类（jjwt 0.12 API）。
@@ -42,13 +43,14 @@ public class JwtUtil {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 签发 token，payload 里带 uid 和用户名 */
-    public String createToken(Long userId, String username) {
+    /** 签发 token，payload 里带 uid、用户名和角色编码 */
+    public String createToken(Long userId, String username, List<String> roles) {
         Date now = new Date();
         Date expire = new Date(now.getTime() + expireHours * 3600 * 1000);
         return Jwts.builder()
                 .subject(username)
                 .claim("uid", userId)
+                .claim("roles", roles)
                 .issuedAt(now)
                 .expiration(expire)
                 .signWith(key)

@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -25,10 +26,12 @@ import java.io.IOException;
  * - 无状态会话：不用 Session，token 放请求头，天然支持前后端分离；
  * - 白名单：login/register 不需要登录，其余接口一律要求认证；
  * - 未登录(401)/无权限(403) 时直接写 JSON，而不是跳转登录页；
- * - 把 JwtAuthenticationFilter 挂在用户名密码过滤器之前，先验 token。
+ * - 把 JwtAuthenticationFilter 挂在用户名密码过滤器之前，先验 token；
+ * - @EnableMethodSecurity 开启方法级鉴权，配合 Controller 上的 @PreAuthorize 做接口权限。
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 

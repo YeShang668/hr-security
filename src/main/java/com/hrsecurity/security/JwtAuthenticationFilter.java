@@ -9,6 +9,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
@@ -16,6 +18,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 每次请求都会经过的过滤器：从请求头取出 JWT → 校验 → 把登录用户放进 SecurityContext。
@@ -48,9 +52,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Long uid = claims.get("uid", Long.class);
                 String username = claims.getSubject();
                 if (uid != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                    LoginUser loginUser = new LoginUser(uid, username);
+                    // 从 JWT claims 读角色编码，转成 ROLE_xxx 权限（hasRole 自动补 ROLE_ 前缀）
+                    List<String> roles = claims.get("roles", List.class);
+                    List<GrantedAuthority> authorities = toAuthorities(roles);
+                    LoginUser loginUser = new LoginUser(uid, username,
+                            roles == null ? Collections.emptyList() : roles);
                     UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(loginUser, null, Collections.emptyList());
+                            new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }
@@ -60,5 +68,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    /** 角色编码列表 → Spring Security 权限对象；token 里没有 roles（旧 token）时按无权限处理 */
+    @SuppressWarnings("unchecked")
+    private List<GrantedAuthority> toAuthorities(List<String> roles) {
+        if (roles == null || roles.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return roles.stream()
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                .collect(Collectors.toList());
     }
 }
