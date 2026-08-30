@@ -14,6 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -49,5 +50,18 @@ public class AuthController {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         return Result.success(authService.getUserInfo(loginUser.getUid()));
+    }
+
+    /**
+     * 登出：POST /api/auth/logout（需要带 token）
+     * 删除 Redis 会话与角色缓存，旧 token 立即失效（登出即失效）
+     */
+    @PostMapping("/logout")
+    public Result<Void> logout(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        String token = authHeader != null && authHeader.startsWith("Bearer ")
+                ? authHeader.substring("Bearer ".length()) : null;
+        authService.logout(token);
+        return Result.success("已退出登录", null);
     }
 }

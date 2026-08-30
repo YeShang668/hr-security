@@ -15,4 +15,7 @@ public interface AuthService {
 
     /** 根据用户 id 返回用户信息（用于 /me） */
     UserInfoVO getUserInfo(Long userId);
+
+    /** 登出：删除 Redis 会话与角色缓存，旧 token 立即失效 */
+    void logout(String token);
 }

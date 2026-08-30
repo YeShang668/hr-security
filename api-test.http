@@ -145,3 +145,27 @@ Content-Type: application/json
   "username": "admin",
   "password": "wrong-password"
 }
+
+### ---------- 5. Redis 会话与登出（第 3 周新增） ----------
+
+### 5.1 登出（删除 Redis 会话 login:token:{token}，旧 token 立即失效）
+### 注意：跑完 5.1 后 adminToken 就失效了，务必接着跑 5.3 重新登录
+POST http://localhost:8080/api/auth/logout
+Authorization: Bearer {{adminToken}}
+
+### 5.2 登出后旧 token 访问 /me → 401（登出即失效，无需等 JWT 过期）
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer {{adminToken}}
+
+### 5.3 重新登录刷新 adminToken（登出后恢复会话）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+> {%
+    client.global.set("adminToken", response.body.data.token);
+%}

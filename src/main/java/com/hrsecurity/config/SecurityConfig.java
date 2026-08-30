@@ -45,7 +45,8 @@ public class SecurityConfig {
             // 前后端分离：不创建 Session，所有状态靠 JWT
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
+                // login/register/logout 不需要认证（logout 的 token 在 Controller 内部解析）
+                .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/logout").permitAll()
                 .anyRequest().authenticated())
             .exceptionHandling(e -> e
                 .authenticationEntryPoint((req, res, ex) -> writeJson(res, 401, "未登录或登录已过期"))

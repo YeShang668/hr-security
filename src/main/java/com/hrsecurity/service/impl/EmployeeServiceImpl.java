@@ -12,7 +12,6 @@ import com.hrsecurity.entity.SysEmployee;
 import com.hrsecurity.mapper.SysDeptMapper;
 import com.hrsecurity.mapper.SysEmployeeMapper;
 import com.hrsecurity.service.EmployeeService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -23,11 +22,14 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
-public class EmployeeServiceImpl implements EmployeeService {
+public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysEmployee> implements EmployeeService {
 
-    private final SysEmployeeMapper employeeMapper;
     private final SysDeptMapper deptMapper;
+
+    public EmployeeServiceImpl(SysEmployeeMapper employeeMapper, SysDeptMapper deptMapper) {
+        super(employeeMapper);
+        this.deptMapper = deptMapper;
+    }
 
     @Override
     public PageResult<EmployeeVO> page(long pageNum, long pageSize, String keyword, Long deptId) {
@@ -43,7 +45,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         }
         wrapper.orderByDesc(SysEmployee::getId);
 
-        Page<SysEmployee> page = employeeMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
+        Page<SysEmployee> page = baseMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
         // 部门名一次性批量查询，避免逐条查部门的 N+1 问题
         Map<Long, String> deptNames = deptNameMap(page.getRecords().stream()
                 .map(SysEmployee::getDeptId).collect(Collectors.toList()));
@@ -55,10 +57,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     @Override
     public EmployeeVO getById(Long id) {
-        SysEmployee employee = employeeMapper.selectById(id);
-        if (employee == null) {
-            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "员工不存在");
-        }
+        SysEmployee employee = getOrThrow(id, "员工不存在");
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
@@ -76,16 +75,13 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setDeptId(dto.getDeptId());
         employee.setEntryDate(dto.getEntryDate());
         employee.setStatus(1);
-        employeeMapper.insert(employee);
+        baseMapper.insert(employee);
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
     @Override
     public EmployeeVO update(Long id, EmployeeDTO dto) {
-        SysEmployee employee = employeeMapper.selectById(id);
-        if (employee == null) {
-            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "员工不存在");
-        }
+        SysEmployee employee = getOrThrow(id, "员工不存在");
         checkEmpNoUnique(dto.getEmpNo(), id);
         checkDeptExists(dto.getDeptId());
 
@@ -98,14 +94,14 @@ public class EmployeeServiceImpl implements EmployeeService {
         employee.setEmail(dto.getEmail());
         employee.setDeptId(dto.getDeptId());
         employee.setEntryDate(dto.getEntryDate());
-        employeeMapper.updateById(employee);
+        baseMapper.updateById(employee);
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
     @Override
     public void delete(Long id) {
         // @TableLogic 生效：deleteById 实际执行 UPDATE status=0（离职）
-        if (employeeMapper.deleteById(id) == 0) {
+        if (baseMapper.deleteById(id) == 0) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "员工不存在");
         }
     }
@@ -117,7 +113,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         if (excludeId != null) {
             wrapper.ne(SysEmployee::getId, excludeId);
         }
-        if (employeeMapper.selectCount(wrapper) > 0) {
+        if (baseMapper.selectCount(wrapper) > 0) {
             throw new BusinessException(ResultCode.CONFLICT.getCode(), "工号已存在");
         }
     }

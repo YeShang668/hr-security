@@ -46,7 +46,7 @@ public class JwtUtil {
     /** 签发 token，payload 里带 uid、用户名和角色编码 */
     public String createToken(Long userId, String username, List<String> roles) {
         Date now = new Date();
-        Date expire = new Date(now.getTime() + expireHours * 3600 * 1000);
+        Date expire = new Date(now.getTime() + getExpireSeconds() * 1000);
         return Jwts.builder()
                 .subject(username)
                 .claim("uid", userId)
@@ -55,6 +55,11 @@ public class JwtUtil {
                 .expiration(expire)
                 .signWith(key)
                 .compact();
+    }
+
+    /** JWT 有效期（秒），Redis 会话 TTL 与其保持一致，保证两者同时过期 */
+    public long getExpireSeconds() {
+        return expireHours * 3600;
     }
 
     /**
