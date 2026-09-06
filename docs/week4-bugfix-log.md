@@ -17,7 +17,7 @@
 - **现象**：`redis-e2e-test.sh` 直接调用本机 `mysql.exe`（-uroot 空密码）和本机 `redis-cli.exe`；容器化部署后 MySQL/Redis 不再暴露宿主端口，专项回归用例（R1/R4/R5c/R6a 等）在 Docker 环境下无法运行。
 - **定位**：脚本把"环境专属"写死成常量（接口地址、客户端路径/凭据）。
 - **修复**：脚本读取环境变量覆盖（默认值不变，本机行为零变化）：`API_BASE`、`MYSQL_CMD`（数据库操作完整命令前缀）、`REDIS_CLI_CMD`；`e2e-test.sh` 同样支持 `API_BASE`。新增 `test-payloads/docker-e2e-test.sh` 一键回归包装：up -d --build → 等待就绪 → 注册 zhangsan（幂等）→ 刷新双 token → 依次跑两套用例（各 31 断言，经 `docker compose exec` 操作容器内 MySQL/Redis）。
-- **验证**：`bash -n` 语法通过；本地默认值下两套用例 20/20、11/11 原样通过（无回归）。容器内实际执行待 Docker Desktop 安装后由 `docker-e2e-test.sh` 验证。
+- **验证**：`bash -n` 语法通过；本地默认值下两套用例 20/20、11/11 原样通过（无回归）。容器实测（2026-09-06，Docker Desktop 29.7.2）：`docker-e2e-test.sh` 一键跑通 **31/31（20+11）**，redis 专项经 `docker compose exec` 正常操作容器内 MySQL/Redis。
 
 ## BUG4-3：初始化脚本与环境事实不一致的隐患（预防性修复）【低】
 
@@ -25,3 +25,10 @@
 - **定位**：Docker 官方 mysql 镜像约定 `/docker-entrypoint-initdb.d/` 只在空数据卷首启执行一次，且镜像已按 `MYSQL_DATABASE/MYSQL_USER` 建库授权。
 - **修复**：新增 `docker-build/initdb/init.sql`：无 DROP、全 `IF NOT EXISTS` 幂等、自带 `CREATE DATABASE IF NOT EXISTS` + `USE`（兼容镜像两种执行方式）、种子数据与本地脚本一致；本地脚本保持原样（本地重建库仍用 `sql/init.sql`）。
 - **验证**：本地按此文件重建库跑通全量回归（等效验证表结构与种子正确）；YAML/结构用 python 校验通过。
+
+## BUG4-4：Docker 首启 init.sql 种子中文双重编码乱码（容器实测暴露）【中】
+
+- **现象**：容器全量回归 C3 失败——分页 keyword 联查返回的 `deptName` 是 `æŠ€æœ¯éƒ¨`（"技术部"）等 mojibake；查库 HEX 确认：`E6 8A 80…`（UTF-8）被存成 `C3A6 C5A0 E282AC…`，即 UTF-8 字节被按 latin1 误解码后再以 utf8mb4 编码入库（双重编码）。
+- **定位**：服务器 `--character-set-server=utf8mb4` 只约束建库默认，管不到导入客户端——官方 mysql 镜像 entrypoint 执行 `/docker-entrypoint-initdb.d/*.sql` 时用 `mysql < file` 方式导入，客户端会话默认 latin1，把 UTF-8 文件字节误按 latin1 发送。此路径仅 Docker 首启触发：本地灌库走 `--default-character-set=utf8mb4`、模拟容器回归（jar+环境变量）不经过 initdb，故此前未暴露。
+- **修复**：`docker-build/initdb/init.sql` 头部加 `SET NAMES utf8mb4;`（会话级，对该文件整次导入生效）。
+- **验证**：`docker compose down -v` 清卷重建后 C3 通过，全量回归 **31/31**。

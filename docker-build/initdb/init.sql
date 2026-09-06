@@ -5,6 +5,10 @@
 -- 表结构与 sql/init.sql 保持一致（utf8mb4 红线）
 -- ============================================
 
+-- 官方 mysql 镜像 entrypoint 用 mysql 客户端执行本文件时客户端默认 latin1，
+-- 会把 UTF-8 中文误按 latin1 发送造成双重编码乱码；显式声明会话字符集
+SET NAMES utf8mb4;
+
 CREATE DATABASE IF NOT EXISTS hr_security
   DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
