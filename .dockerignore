@@ -1,0 +1,16 @@
+# 构建上下文瘦身：只给镜像 COPY 需要的东西
+target/
+.git/
+.idea/
+*.log
+*.iml
+
+# 密钥与本地配置不进镜像
+application-local.yml
+.env
+
+# 本地测试脚本（含登录 token）、初始化 SQL、文档、接口测试文件均无需进镜像
+test-payloads/
+sql/
+docs/
+api-test.http

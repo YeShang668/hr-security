@@ -24,7 +24,7 @@ import java.util.List;
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.secret}")
+    @Value("${jwt.secret:}")
     private String secret;
 
     @Value("${jwt.expire-hours:24}")
@@ -34,10 +34,15 @@ public class JwtUtil {
 
     @PostConstruct
     public void init() {
-        // 环境变量优先，保证生产不依赖配置文件
+        // 环境变量优先（Docker/生产注入 JWT_SECRET），其次 application-local.yml 的 jwt.secret
         String env = System.getenv("JWT_SECRET");
         if (env != null && !env.isBlank()) {
             secret = env;
+        }
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "JWT 密钥未配置：请设置环境变量 JWT_SECRET（至少 32 字节，可用 openssl rand -base64 48 生成），"
+                            + "或在本机开发时写入 application-local.yml 的 jwt.secret");
         }
         // HS256 要求密钥至少 32 字节
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));

@@ -1,0 +1,83 @@
+# ============================================
+# hr-security 一键部署编排（第 4 周）——Docker Compose v2（无需 version 字段）
+#
+# 用法：
+#   docker compose up -d --build     一键启动（首次会自动建库建表+种子数据）
+#   docker compose ps                查看状态
+#   docker compose logs -f app       看应用日志
+#   docker compose down              停止（数据卷保留）
+#   docker compose down -v           停止并删除数据卷（下次启动重新初始化，慎用！）
+#
+# 可覆盖项（不建 .env 则用下方默认值，仅限本地演示；生产务必 export 强密码/随机密钥）：
+#   MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / JWT_SECRET
+# 也可复制 .env.example 为 .env 后修改（.env 已被 gitignore，不会提交）
+#
+# 面试要点：mysql/redis 不对外发布端口（只在内网给 app 用），避免与宿主机 3306/6379 冲突，
+# 也缩小攻击面；app 通过服务名 mysql/redis 访问，由 depends_on + healthcheck 保证就绪顺序。
+# ============================================
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: hr_security
+      MYSQL_USER: ${MYSQL_USER:-hr}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hr123456}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql            # 数据卷：down 不丢数据
+      - ./docker-build/initdb:/docker-entrypoint-initdb.d:ro   # 首次启动自动初始化
+    healthcheck:
+      # $$ 转义：把 MYSQL_ROOT_PASSWORD 传给容器内 shell 展开
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    networks: [hr-net]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]   # AOF 持久化到数据卷
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [hr-net]
+
+  app:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy          # 等 MySQL 初始化完成再起应用
+      redis:
+        condition: service_healthy
+    environment:
+      # 服务名即容器内 DNS，应用不再硬编码 localhost
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: ${MYSQL_USER:-hr}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hr123456}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # 演示用开发密钥（长度>32字节）。生产：openssl rand -base64 48 生成后 export JWT_SECRET
+      JWT_SECRET: ${JWT_SECRET:-HrSec-Docker-Dev-only-9f3a2b7c4d8e1f6a0b5c3d7e9f2a4b6c8d0e1f3a5b7c9d1e3f5a}
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"
+    networks: [hr-net]
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  hr-net:
+    driver: bridge
