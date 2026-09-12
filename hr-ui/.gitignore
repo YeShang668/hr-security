@@ -1,0 +1,15 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-ssr/
+
+# 日志与本地环境
+*.log
+npm-debug.log*
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.local

@@ -169,3 +169,86 @@ Content-Type: application/json
 > {%
     client.global.set("adminToken", response.body.data.token);
 %}
+
+### ---------- 6. 用户管理（第 5 周新增，全部仅 ADMIN） ----------
+
+### 6.1 用户分页列表（keyword 匹配用户名/昵称，status 1启用 0禁用；出参不含密码字段）
+GET http://localhost:8080/api/users?page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+### 6.2 角色列表（用户管理页的角色下拉框数据源）
+GET http://localhost:8080/api/roles
+Authorization: Bearer {{adminToken}}
+
+### 6.3 权限测试：EMPLOYEE 查用户列表 → 403（前端隐藏 ≠ 安全）
+GET http://localhost:8080/api/users
+Authorization: Bearer {{empToken}}
+
+### 6.4 给 zhangsan(id=2) 分配 ADMIN + EMPLOYEE 角色
+### 效果：他不重新登录，旧 token 下一个请求就拿到 ADMIN 权限（服务端已删 user:roles:2 缓存）
+PUT http://localhost:8080/api/users/2/roles
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "roleIds": [1, 2]
+}
+
+### 6.5 收回 ADMIN（只留 EMPLOYEE），旧 token 立即失去管理权限
+PUT http://localhost:8080/api/users/2/roles
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "roleIds": [2]
+}
+
+### 6.6 禁用 zhangsan → 删其全部 Redis 会话（踢下线）+ 删角色缓存
+### 禁用后：他手里的 token 立即 401，且登录被拒（403 账号已被禁用）
+PUT http://localhost:8080/api/users/2/status
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "status": 0
+}
+
+### 6.7 权限测试：禁用自己 → 400（管理员自我保护红线）
+PUT http://localhost:8080/api/users/1/status
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "status": 0
+}
+
+### 6.8 权限测试：修改自己的角色 → 400（防止把自己降权后回不来）
+PUT http://localhost:8080/api/users/1/roles
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "roleIds": [2]
+}
+
+### 6.9 恢复启用 zhangsan（演示收尾，恢复演示环境）
+PUT http://localhost:8080/api/users/2/status
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "status": 1
+}
+
+### 6.10 校验：zhangsan 恢复后可正常登录（手动跑 1.3 刷新 {{empToken}}）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+> {%
+    client.global.set("empToken", response.body.data.token);
+%}

@@ -17,5 +17,14 @@ application-local.yml
 .DS_Store
 Thumbs.db
 
-# 本地端到端测试脚本与登录 token（含 JWT，禁止提交）
-test-payloads/
+# 端到端回归脚本纳入版本管理（第 5 周起，便于他人复现），
+# 但登录 token（*_login.json，含真实 JWT）与日志绝不提交
+test-payloads/*
+!test-payloads/*.sh
+!test-payloads/register.json
+!test-payloads/login-admin.json
+!test-payloads/login-zhangsan.json
+!test-payloads/emp_body.json
+!test-payloads/dept_put.json
+test-payloads/*_login.json
+test-payloads/*.log

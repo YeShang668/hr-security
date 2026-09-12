@@ -1,5 +1,7 @@
 package com.hrsecurity.service;
 
+import com.hrsecurity.entity.SysRole;
+
 import java.util.List;
 
 /**
@@ -14,4 +16,7 @@ public interface RoleService {
 
     /** 角色变更后调用：删除该用户角色缓存，下一次请求查库回填新角色 */
     void evict(Long userId);
+
+    /** 全部启用角色，供用户管理页的角色下拉框使用 */
+    List<SysRole> listAll();
 }

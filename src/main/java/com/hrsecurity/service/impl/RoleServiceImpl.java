@@ -55,6 +55,13 @@ public class RoleServiceImpl implements RoleService {
         redisTemplate.delete(ROLE_CACHE_KEY_PREFIX + userId);
     }
 
+    @Override
+    public List<SysRole> listAll() {
+        return roleMapper.selectList(new LambdaQueryWrapper<SysRole>()
+                .eq(SysRole::getStatus, 1)
+                .orderByAsc(SysRole::getId));
+    }
+
     /** 从数据库查用户绑定的角色编码列表（sys_user_role → sys_role 两表） */
     private List<String> loadFromDb(Long userId) {
         List<Long> roleIds = userRoleMapper.selectList(

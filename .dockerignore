@@ -14,3 +14,7 @@ test-payloads/
 sql/
 docs/
 api-test.http
+
+# 前端工程（第 5 周新增）：后端镜像不需要它，且 node_modules/dist 会让构建上下文暴涨。
+# 前端 Docker 化（Nginx 静态托管）留到 10 月 HTTPS 部署周再做。
+hr-ui/
