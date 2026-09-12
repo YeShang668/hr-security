@@ -79,6 +79,7 @@ docker compose down -v           # 彻底重置（删数据卷，下次 up 重�
 | Docker 一键回归 | `bash test-payloads/docker-e2e-test.sh`（自动起容器并跑满 56 用例） | 部署后同一套用例全量回归 |
 
 **当前结果（2026-09-12 本地 jar 实测）：56/56 通过**（20 + 11 + 25）。
+说明：本周第 5 周的新增用例已在本地（jar + 本机 MySQL/Redis）跑通；`docker-e2e-test.sh` 已同步纳入 user-e2e（预期 56），但**容器的第 5 周复测尚未执行**（Docker Desktop 未启动），下次跑容器回归时以脚本输出的实际结果为准。
 
 注意：
 - 测试脚本依赖**干净种子数据**：本地重跑先重灌 `sql/init.sql` 并重新注册/登录 zhangsan 刷新 token；Docker 环境测试会残留数据，重跑需 `docker compose down -v` 后重新 up；
