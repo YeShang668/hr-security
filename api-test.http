@@ -252,3 +252,80 @@ Content-Type: application/json
 > {%
     client.global.set("empToken", response.body.data.token);
 %}
+
+### ---------- 7. 敏感字段加密与脱敏（第 6 周新增） ----------
+### 前置：先跑 7.1 加密迁移（把模拟旧系统明文表刷成密文），否则种子员工的敏感字段为空
+
+### 7.1 历史数据加密迁移（幂等：第一次 migrated=3，再跑一次 migrated=0 skipped=3）
+POST http://localhost:8080/api/admin/crypto/backfill
+Authorization: Bearer {{adminToken}}
+
+### 7.2 员工列表：敏感字段全部是脱敏值（连 ADMIN 也一样，最小披露）
+### 关注点：phone=138****0001、idCard=110***********1234、bankCard 仅后 4 位、salary=****、sensitiveVisible=true
+GET http://localhost:8080/api/employees?page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+### 7.3 员工详情（同样是脱敏值）
+GET http://localhost:8080/api/employees/1
+Authorization: Bearer {{adminToken}}
+
+### 7.4 敏感信息明文（唯一明文出口，需 employee:sensitive:read，默认仅 ADMIN）
+GET http://localhost:8080/api/employees/1/sensitive
+Authorization: Bearer {{adminToken}}
+
+### 7.5 权限测试：EMPLOYEE 取明文 → 403（权限编码缺失）
+GET http://localhost:8080/api/employees/1/sensitive
+Authorization: Bearer {{empToken}}
+
+### 7.6 按身份证精确查（密文不可 like；走 HMAC-SHA256 盲索引等值匹配，返回脱敏值）
+GET http://localhost:8080/api/employees/search?idCard=110101199003071234
+Authorization: Bearer {{adminToken}}
+
+### 7.7 新增员工：敏感字段**明文传入**，落库由 TypeHandler 加密（密文格式 v1:k1:{iv}:{ct}）
+POST http://localhost:8080/api/employees
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "empNo": "E300",
+  "name": "加密演示",
+  "gender": 1,
+  "phone": "13700001111",
+  "idCard": "500103199702030014",
+  "bankCard": "6228480402564890099",
+  "salary": 12345.67,
+  "deptId": 1,
+  "entryDate": "2026-01-05"
+}
+
+### 7.8 校验落库是密文（在数据库里执行，不要用接口）：
+###   SELECT emp_no, phone_enc, id_card_enc, id_card_hash FROM sys_employee WHERE emp_no='E300';
+###   → 看到 v1:k1:... 密文；同一明文再存一次密文也不同（IV 随机）
+
+### 7.9 修改员工：敏感字段**留空 = 不修改**（防"脱敏值被回填提交"覆盖真实数据）
+PUT http://localhost:8080/api/employees/1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "empNo": "E001",
+  "name": "张三改",
+  "gender": 1,
+  "deptId": 1
+}
+
+### 7.10 校验：把脱敏值当明文提交 → 400（后端 DTO 格式校验兜底）
+PUT http://localhost:8080/api/employees/1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "empNo": "E001",
+  "name": "张三改",
+  "phone": "138****0001",
+  "deptId": 1
+}
+
+### 7.11 权限测试：EMPLOYEE 触发加密迁移 → 403
+POST http://localhost:8080/api/admin/crypto/backfill
+Authorization: Bearer {{empToken}}

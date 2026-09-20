@@ -69,6 +69,10 @@ services:
       REDIS_PORT: "6379"
       # 演示用开发密钥（长度>32字节）。生产：openssl rand -base64 48 生成后 export JWT_SECRET
       JWT_SECRET: ${JWT_SECRET:-HrSec-Docker-Dev-only-9f3a2b7c4d8e1f6a0b5c3d7e9f2a4b6c8d0e1f3a5b7c9d1e3f5a}
+      # 敏感字段 AES-256-GCM 主密钥：32 字节 Base64（这里是演示用固定密钥，
+      # 生产必须 openssl rand -base64 32 生成后 export AES_MASTER_KEY，并由密钥管理服务托管）
+      AES_MASTER_KEY: ${AES_MASTER_KEY:-NlxSCJlKMN9IIuBbH3dufWfZbGIa9QWMlCQC+DD4gs8=}
+      AES_KEY_ID: ${AES_KEY_ID:-k1}
       TZ: Asia/Shanghai
     ports:
       - "8080:8080"

@@ -41,7 +41,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">本周演示剧本（第 5 周：前端 + 用户管理）</span>
+            <span class="card-title">本周演示剧本（第 6 周：敏感字段加密 + 动态脱敏）</span>
           </template>
           <el-timeline>
             <el-timeline-item
@@ -97,18 +97,18 @@ const myMenus = computed(() => {
 })
 
 const demoSteps = [
-  { tag: '1. 登录', text: 'admin/123456 登录，菜单含「用户管理」；zhangsan 登录看不到该菜单', type: 'primary' },
-  { tag: '2. 前端隐藏 ≠ 安全', text: '用 zhangsan 的 token 直接请求 /api/users，后端返回 403 无权限', type: 'warning' },
-  { tag: '3. 角色分配', text: '给 zhangsan 加 ADMIN 角色 → 他不重新登录，旧 token 立即出现「新增员工」按钮', type: 'success' },
-  { tag: '4. 禁用即踢下线', text: '禁用 zhangsan → 他手里的 token 下一个请求直接 401 被踢回登录页', type: 'danger' },
-  { tag: '5. 登出即失效', text: '退出登录后旧 token 立即 401（Redis 会话被删）', type: 'info' }
+  { tag: '1. 直连数据库看密文', text: '员工管理列表里的手机号/身份证/银行卡/工资都是脱敏值；直接查库看到的是 v1:k1:... 密文，明文列已不存在', type: 'primary' },
+  { tag: '2. 查看完整信息（显式明文）', text: '点「查看完整信息」才返回明文，后端校验 employee:sensitive:read 权限；zhangsan 没有该按钮，接口直调也是 403', type: 'warning' },
+  { tag: '3. 密文不可模糊查', text: '关键字框搜手机号/身份证搜不到（密文没法 like）；改用「身份证」精确查询，走 HMAC 哈希匹配命中', type: 'success' },
+  { tag: '4. 历史数据加密迁移', text: '模拟旧系统明文表 legacy_employee_plain → 一键 /api/admin/crypto/backfill 加密刷入，重复执行 migrated=0（幂等）', type: 'danger' },
+  { tag: '5. 篡改即被发现', text: '手工改一位密文，GCM 认证标签校验失败，接口直接报错而不是返回乱码（完整性保护）', type: 'info' }
 ]
 
 const securityPoints = [
-  { title: '认证', desc: 'BCrypt 存密码 + JWT 24h + Redis 会话，登出/禁用即失效', icon: 'Key' },
-  { title: '鉴权', desc: 'RBAC 角色 + @PreAuthorize 接口级控制，前端仅做展示控制', icon: 'Lock' },
-  { title: '缓存一致性', desc: '角色变更删 user:roles 缓存 + 30 分钟兜底 TTL', icon: 'Refresh' },
-  { title: '待加密项', desc: '身份证/手机号/工资等字段 9/19 起 AES-256-GCM 加密 + 脱敏', icon: 'Warning' }
+  { title: '字段级加密', desc: 'AES-256-GCM（JDK javax.crypto）+ 每次随机 12 字节 IV + 128 位认证标签', icon: 'Lock' },
+  { title: '动静自动加解密', desc: 'MyBatis-Plus TypeHandler 接管读写，业务代码只见明文、库里只有密文', icon: 'Switch' },
+  { title: '动态脱敏', desc: '列表/详情一律脱敏（连 ADMIN 也一样），明文只从一次显式请求的出口出', icon: 'View' },
+  { title: '可检索性设计', desc: '身份证存 HMAC-SHA256 盲索引，精确查询与唯一校验都能做，且不可逆', icon: 'Search' }
 ]
 </script>
 

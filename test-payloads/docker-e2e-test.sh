@@ -1,17 +1,18 @@
 #!/bin/bash
 # ============================================
-# hr-security Docker 环境一键回归（全量 20 + 11 + 25 = 56 用例）
-# 第 5 周更新：新增 user-e2e-test.sh（用户管理专项 25 用例）
+# hr-security Docker 环境一键回归（全量 20 + 11 + 25 + 40 = 96 用例）
+# 第 6 周更新：新增 crypto-e2e-test.sh（AES 加密/脱敏/可检索/迁移专项 40 用例）
 # 前置：Docker Desktop 已启动；本机 8080 未被占用（请先停掉旧的本地 app 实例）
 # 用法：bash test-payloads/docker-e2e-test.sh
 #
 # 说明：
 #  1. docker compose up -d --build（首次自动建库建表+种子数据，MySQL 初始化需等 30~60s）
 #  2. 等待应用就绪 → 注册 zhangsan（幂等）→ 刷新 admin/emp 登录 token
-#  3. 跑 e2e-test.sh（20 用例）+ redis-e2e-test.sh（11 用例）+ user-e2e-test.sh（25 用例，
-#     经 docker compose exec 操作容器内 MySQL/Redis）
-#  4. 测试会在 DB 留下 E100~E303 等测试数据，**同一数据卷不可原样重跑**；
+#  3. 跑 e2e-test.sh（20）+ redis-e2e-test.sh（11）+ user-e2e-test.sh（25）
+#     + crypto-e2e-test.sh（40，经 docker compose exec 操作容器内 MySQL/Redis）
+#  4. 测试会在 DB 留下 E100~E303/E900 等测试数据，**同一数据卷不可原样重跑**；
 #     重跑请重置：docker compose down -v && docker compose up -d --build（会清空数据卷，谨慎）
+#  5. 容器内 AES 主密钥由 docker-compose 的 AES_MASTER_KEY 注入（默认开发密钥）
 # ============================================
 cd "$(dirname "$0")"
 ROOT="$(cd .. && pwd)"
@@ -67,7 +68,7 @@ curl -s -X POST $API/api/auth/login -H "Content-Type: application/json" \
 curl -s -X POST $API/api/auth/login -H "Content-Type: application/json" \
      --data-binary @test-payloads/login-zhangsan.json > test-payloads/emp_login.json
 
-echo "==> [5/5] 全量回归：e2e（20）→ redis-e2e（11）→ user-e2e（25）"
+echo "==> [5/5] 全量回归：e2e（20）→ redis-e2e（11）→ user-e2e（25）→ crypto-e2e（40）"
 OUT=$(mktemp)
 TOTAL_PASS=0; TOTAL_FAIL=0
 sum_up() { # 从 tee 出来的结果里累计 PASS/FAIL
@@ -87,12 +88,16 @@ sum_up
 # 用户管理专项：会临时禁用/启用 zhangsan，脚本结束时自动恢复
 (cd test-payloads && bash user-e2e-test.sh) 2>&1 | tee "$OUT"
 sum_up
+
+# 加密专项：AES 字段加密 / 动态脱敏 / 哈希可检索 / 幂等刷数，会临时清空 E001~E003 再重新迁移（幂等）
+(cd test-payloads && bash crypto-e2e-test.sh) 2>&1 | tee "$OUT"
+sum_up
 rm -f "$OUT"
 
 echo
 echo "=========================================="
 echo "Docker 环境回归结果：PASS=$TOTAL_PASS FAIL=$TOTAL_FAIL"
-if [ "$TOTAL_FAIL" -gt 0 ] || [ "$TOTAL_PASS" -ne 56 ]; then
+if [ "$TOTAL_FAIL" -gt 0 ] || [ "$TOTAL_PASS" -ne 96 ]; then
   echo "存在失败用例！如需干净环境重跑：docker compose down -v 后重新执行本脚本（会清空数据库，谨慎）"
   exit 1
 fi

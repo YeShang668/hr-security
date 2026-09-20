@@ -37,3 +37,15 @@ jwt:
   expire-hours: 24
   # 密钥不入主配置：环境变量 JWT_SECRET 优先（JwtUtil 内校验），其次本地 application-local.yml；
   # 两处都缺失时启动直接报错提示，避免用弱密钥静默运行
+
+crypto:
+  # 敏感字段 AES-256-GCM 加密（第 6 周）。
+  # 主密钥同样**不入主配置**：环境变量 AES_MASTER_KEY 优先，其次本地 application-local.yml 的
+  # crypto.master-key；两处都缺 → 启动失败（EnvKeyProvider 内 fail fast）。
+  # 生成方式：openssl rand -base64 32
+  #
+  # keyId 是密钥版本号，会写进密文 v1:{keyId}:{iv}:{ct}；
+  # 第 7 周做 KEK/DEK 与密钥轮换时，新数据用新 keyId 加密、老密文按老 keyId 取老密钥解密。
+  key-id: ${AES_KEY_ID:k1}
+  # 身份证检索哈希盐：留空则由 AES 主密钥域分隔派生（不必额外管一个密钥）
+  # hash-salt: ${ID_HASH_SALT:}
