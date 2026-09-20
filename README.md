@@ -1,5 +1,7 @@
 # hr-security · 基于 AES 与 RBAC 的人事敏感数据安全管控系统
 
+[![docker-regression](https://github.com/YeShang668/hr-security/actions/workflows/docker-regression.yml/badge.svg)](https://github.com/YeShang668/hr-security/actions/workflows/docker-regression.yml)
+
 > 毕设 & 简历主项目。进度：
 > ✅ 第 1 周（08-16）项目骨架 + 登录认证　✅ 第 2 周（08-23）RBAC + 部门/员工 CRUD + 接口权限
 > ✅ 第 3 周（08-30）Redis 登录会话 + 权限缓存 + 数据层重构　✅ 第 4 周（09-06）Docker Compose 部署 + 场景-风险-策略调研（容器实测 31/31）
@@ -90,9 +92,29 @@ docker compose down -v           # 彻底重置（删数据卷，下次 up 重�
 | IDEA HTTP Client | 打开 `api-test.http` 按顺序点运行 | 手工冒烟 |
 | 本地全量回归 | `bash test-payloads/e2e-test.sh`（20）+ `bash test-payloads/redis-e2e-test.sh`（11）+ `bash test-payloads/user-e2e-test.sh`（25）+ `bash test-payloads/crypto-e2e-test.sh`（40） | RBAC/CRUD + Redis 会话/角色变更/登出 + 用户管理/禁用踢下线 + **加密/脱敏/可检索/迁移** |
 | Docker 一键回归 | `bash test-payloads/docker-e2e-test.sh`（自动起容器并跑满 96 用例） | 部署后同一套用例全量回归 |
+| 容器回归（免本机虚拟化） | GitHub Actions → workflow `docker-regression`（push 自动触发或手动 Run） | 同上；本机 Docker 不可用时的替代路径 |
 
-**当前结果（2026-09-20 本地 jar 实测）：96/96 通过**（20 + 11 + 25 + 40）。
-说明：`docker-e2e-test.sh` 已同步纳入 crypto 专项（预期 96）；容器复测结果以脚本实际输出为准（见文末"第 6 周容器复测"小节）。
+**当前结果（2026-09-20）：本地 96/96 通过（20 + 11 + 25 + 40）；容器环境 96/96 通过（GitHub Actions 实测）。**
+
+- 本地实测：jar + 本机 MySQL/Redis，仅用环境变量注入配置（模拟容器运行方式）；
+- **容器实测：`docker-e2e-test.sh` 已在 GitHub Actions（ubuntu runner，原生 Docker + Compose v2）跑通**，
+  两次运行均 success（[run 记录](https://github.com/YeShang668/hr-security/actions/workflows/docker-regression.yml)）。
+  脚本内部有硬断言（`TOTAL_PASS != 96 || TOTAL_FAIL > 0` 即 exit 1），因此 CI 成功 = 容器环境 96/96；
+  各脚本的 `结果：PASS=x FAIL=y` 会汇总到 CI 的 Step Summary，点进去即可看到。
+- 触发方式：`.github/workflows/docker-regression.yml`（push 相关路径自动触发，也可在 Actions 页面手动 Run workflow）。
+- **本机为什么不用 Docker 跑**（2026-09-20 记录）：本机是 Windows 11 家庭版，`HypervisorPresent = False`，
+  Docker Desktop 报 "Virtualization support not detected"。诊断结论：**BIOS 虚拟化其实是开着的**
+  （`VirtualizationFirmwareEnabled = True`），缺的是 Windows 侧的"虚拟机平台"功能/hypervisor 启动项
+  （`wsl -d docker-desktop` 提示 "所需的虚拟化功能未启用，请启用虚拟机平台并确保固件开启虚拟化"）。
+  修复（需管理员 PowerShell + 重启，不影响项目代码）：
+  ```powershell
+  dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+  dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+  bcdedit /set hypervisorlaunchtype auto
+  # 重启后验证：systeminfo 出现"已检测到虚拟机监控程序"，或任务管理器→性能→CPU→虚拟化:已启用
+  ```
+  Docker Desktop 必须跑在 Linux 虚拟机里（WSL2 或 Hyper-V），**没有虚拟化就跑不了容器**，
+  所以本机这条路的替代方案就是上面的 CI（真实 Docker 环境）——两者互为备份。
 
 注意：
 - 测试脚本依赖**干净种子数据**：本地重跑先重灌 `sql/init.sql` 并重新注册/登录 zhangsan 刷新 token；Docker 环境测试会残留数据，重跑需 `docker compose down -v` 后重新 up；
