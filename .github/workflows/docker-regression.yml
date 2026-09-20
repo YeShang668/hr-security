@@ -1,0 +1,55 @@
+# ============================================
+# 容器回归（GitHub Actions 版）——不依赖本机虚拟化能力
+#
+# 为什么需要它：
+#   本机是 Windows 11 家庭版，Docker Desktop 需要 WSL2 / Hyper-V 才能跑，
+#   而"本机 Windows 虚拟化功能层未启用"时 Docker Desktop 起不来（HypervisorPresent=False）。
+#   GitHub 的 ubuntu runner 原生带 Docker + Compose v2，因此把"容器一键部署 + 全量回归"
+#   放到 CI 里跑：既拿到真实容器环境的回归证据，也不需要动本机 BIOS / Windows 功能 / 重启。
+#
+# 跑什么：test-payloads/docker-e2e-test.sh（自动 docker compose up -d --build →
+#         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 96 用例：20+11+25+40）
+# 触发：手动（workflow_dispatch）或 push 改动到相关路径
+# 失败排查：可手动执行末尾的 docker compose logs app
+# ============================================
+name: docker-regression
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - 'sql/**'
+      - 'docker-build/**'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
+      - 'test-payloads/**'
+      - '.github/workflows/docker-regression.yml'
+
+jobs:
+  docker-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 环境自检（docker / compose / python）
+        run: |
+          docker version
+          docker compose version
+          python3 --version
+          bash --version | head -1
+
+      - name: 容器一键部署 + 全量回归（96 用例）
+        env:
+          PYTHON: python3
+        run: bash test-payloads/docker-e2e-test.sh
+
+      - name: 失败时导出应用与数据库日志
+        if: failure()
+        run: |
+          docker compose ps || true
+          docker compose logs --tail=200 app || true
+          docker compose logs --tail=100 mysql || true
