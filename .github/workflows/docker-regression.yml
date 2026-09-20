@@ -45,7 +45,17 @@ jobs:
       - name: 容器一键部署 + 全量回归（96 用例）
         env:
           PYTHON: python3
-        run: bash test-payloads/docker-e2e-test.sh
+        run: |
+          set -o pipefail
+          bash test-payloads/docker-e2e-test.sh 2>&1 | tee /tmp/docker-e2e.log
+          # 把各脚本的"结果：PASS=x FAIL=y"汇总写进 CI 摘要，网页上直接可看，无需下载日志
+          {
+            echo '## 容器环境全量回归结果'
+            echo ''
+            echo '```'
+            grep -E '结果：PASS|Docker 环境回归结果' /tmp/docker-e2e.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 失败时导出应用与数据库日志
         if: failure()
