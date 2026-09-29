@@ -52,11 +52,23 @@ jobs:
           bash --version | head -1
 
       - name: 构建镜像（构建日志单独可见）
-        run: docker compose build
+        run: |
+          # 先拉基础镜像（mysql/redis/jre），失败要在**这一步**暴露：
+          # 第 7 周 run 7 的失败就是 up 阶段拉不到 mysql/redis 镜像（Docker Hub 瞬时问题），
+          # 因为整个 up 被 bash -e 立即中断，且那时还没有任何容器，现场只剩"空"。
+          docker compose pull --ignore-buildable || { echo '!! 基础镜像拉取失败（多为 Docker Hub 瞬时问题，可重试）'; exit 1; }
+          docker compose build
 
       - name: 启动容器并等待应用就绪
         run: |
-          docker compose up -d
+          # 关键：up 的输出必须落盘 + 失败立刻打印现场，不能让 -e 静默中断（否则日志全空、无从判断）
+          if ! docker compose up -d > /tmp/compose-up.log 2>&1; then
+            echo '!! docker compose up -d 失败，输出如下：'
+            cat /tmp/compose-up.log
+            echo '== compose ps -a =='; docker compose ps -a || true
+            exit 1
+          fi
+          cat /tmp/compose-up.log
           # 与 docker-e2e-test.sh 里的就绪判断保持一致：能登录即视为就绪（首次 MySQL 初始化 30~60s）
           for i in $(seq 1 90); do
             CODE=$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/api/auth/login \
@@ -68,6 +80,7 @@ jobs:
           echo "应用 180s 内未就绪"; docker compose ps; docker compose logs --tail=200 app; exit 1
 
       - name: 全量回归（176 用例）
+        id: regression
         env:
           PYTHON: python3
         run: |
@@ -118,10 +131,14 @@ jobs:
           # 注意：该分支只含日志，不在本 workflow 的 push 触发路径里，不会造成递归触发。
           set +e
           mkdir -p /tmp/ci-logs
-          cp /tmp/docker-e2e.log /tmp/ci-logs/docker-e2e.log 2>/dev/null || echo "(无 /tmp/docker-e2e.log)" > /tmp/ci-logs/docker-e2e.log
+          cp /tmp/docker-e2e.log /tmp/ci-logs/docker-e2e.log 2>/dev/null || echo "(本次没有 docker-e2e.log：说明失败发生在回归之前)" > /tmp/ci-logs/docker-e2e.log
+          cp /tmp/compose-up.log /tmp/ci-logs/compose-up.log 2>/dev/null || echo "(本次没有 compose-up.log)" > /tmp/ci-logs/compose-up.log
           docker compose ps -a > /tmp/ci-logs/compose-ps.txt 2>&1
           docker compose logs --tail=400 app > /tmp/ci-logs/app.log 2>&1
           docker compose logs --tail=200 mysql > /tmp/ci-logs/mysql.log 2>&1
+          docker compose logs --tail=100 redis > /tmp/ci-logs/redis.log 2>&1
+          docker images > /tmp/ci-logs/images.txt 2>&1
+          df -h / /var/lib/docker > /tmp/ci-logs/disk.txt 2>&1
           cd /tmp/ci-logs
           git init -q
           git checkout -q -b ci-logs
@@ -130,6 +147,7 @@ jobs:
           {
             echo "run_id: ${{ github.run_id }}"
             echo "sha: ${{ github.sha }}"
+            echo "failed_step: ${{ steps.regression.outcome == 'failure' && '全量回归' || '构建/启动/就绪阶段' }}"
             echo "run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } > meta.txt
           git add -A
