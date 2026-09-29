@@ -55,6 +55,11 @@ EOF
 }
 put_json() { send_json PUT "$1" "$2"; }
 post_json() { send_json POST "$1" "$2"; }
+# 把"上一条 python 断言"的退出码计入 PASS/FAIL（与 crypto 脚本同一写法）
+# 踩坑记录（BUG7-8）：本脚本一开始漏定义这个函数，A4 改成 python 断言后就变成
+# "命令找不到"——既没 PASS 也没 FAIL，总数悄悄少 1（49 而不是 50），
+# 只有"期望用例数"校验才能发现这类静默丢用例。
+label_ok() { if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi; }
 
 # 轮询等待异步审计落库：$1=用例名 $2=期望值 $3=SQL $4=超时秒数(默认 10)
 # 超时给 10s：容器环境下每条 SQL 都要经 docker compose exec（约 1s/次），轮询次数会比本地少，

@@ -74,44 +74,52 @@ curl -s -X POST $API/api/auth/login -H "Content-Type: application/json" \
 
 echo "==> [5/5] 全量回归：e2e(20) → redis(11) → user(25) → crypto(40) → audit(50) → keyrotation(30)"
 OUT=$(mktemp)
-TOTAL_PASS=0; TOTAL_FAIL=0
-sum_up() { # 从 tee 出来的结果里累计 PASS/FAIL
+TOTAL_PASS=0; TOTAL_FAIL=0; COUNT_MISMATCH=0
+sum_up() { # $1=脚本名 $2=该脚本期望用例数
   LAST=$(grep -a "结果：PASS=" "$OUT" | tail -1)
   P=$(echo "$LAST" | sed -n 's/.*PASS=\([0-9]*\).*/\1/p'); F=$(echo "$LAST" | sed -n 's/.*FAIL=\([0-9]*\).*/\1/p')
   TOTAL_PASS=$((TOTAL_PASS + ${P:-0})); TOTAL_FAIL=$((TOTAL_FAIL + ${F:-0}))
+  # 用例数校验（第 7 周新增，教训来自 BUG7-8）：
+  # 如果某个用例因为脚本自身缺陷**既没 PASS 也没 FAIL**（例如调用了未定义的函数 → command not found），
+  # 总数会悄悄少 1，而 FAIL=0 看起来一切正常，只看"是否有 FAIL"是发现不了的。
+  # 所以这里逐脚本核对 PASS 数是否与期望一致。
+  if [ "${P:-0}" != "$2" ]; then
+    echo "!! $1 用例数异常：期望 $2，实际 PASS=${P:-0}（可能有用例既没 PASS 也没 FAIL，必须排查）"
+    COUNT_MISMATCH=1
+  fi
 }
 (cd test-payloads && bash e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "e2e-test.sh" 20
 
 export MYSQL_CMD="$COMPOSE exec -T mysql mysql -u$MYSQL_USER -p$MYSQL_PASSWORD --default-character-set=utf8mb4 hr_security -e"
 export REDIS_CLI_CMD="$COMPOSE exec -T redis redis-cli"
 export API_BASE=$API
 (cd test-payloads && bash redis-e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "redis-e2e-test.sh" 11
 
 # 用户管理专项：会临时禁用/启用 zhangsan，脚本结束时自动恢复
 (cd test-payloads && bash user-e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "user-e2e-test.sh" 25
 
 # 加密专项：AES 字段加密 / 动态脱敏 / 哈希可检索 / 幂等刷数，会临时清空 E001~E003 再重新迁移（幂等）
 (cd test-payloads && bash crypto-e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "crypto-e2e-test.sh" 40
 
 # 审计专项：AOP 埋点 / 异步落库 / 查询过滤 / 权限边界，会临时禁用改角色 zhangsan 并自动恢复
 (cd test-payloads && bash audit-e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "audit-e2e-test.sh" 50
 
 # 密钥轮换专项（必须最后跑）：轮换到 k2、分批重加密、停用 k1；
 # "KEK 缺失启动失败"用例借容器再起一个进程验证（覆盖 AES_MASTER_KEY 为空 → 必须启动失败）
 export FAILFAST_CMD="cd $ROOT && docker compose -f $ROOT/docker-compose.yml run --rm -T -e AES_MASTER_KEY= app"
 (cd test-payloads && bash keyrotation-e2e-test.sh) 2>&1 | tee "$OUT"
-sum_up
+sum_up "keyrotation-e2e-test.sh" 30
 rm -f "$OUT"
 
 echo
 echo "=========================================="
 echo "Docker 环境回归结果：PASS=$TOTAL_PASS FAIL=$TOTAL_FAIL"
-if [ "$TOTAL_FAIL" -gt 0 ] || [ "$TOTAL_PASS" -ne 176 ]; then
+if [ "$TOTAL_FAIL" -gt 0 ] || [ "$COUNT_MISMATCH" != "0" ] || [ "$TOTAL_PASS" -ne 176 ]; then
   echo "存在失败用例！如需干净环境重跑：docker compose down -v 后重新执行本脚本（会清空数据库，谨慎）"
   exit 1
 fi
