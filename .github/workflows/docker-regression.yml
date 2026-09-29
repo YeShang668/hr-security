@@ -36,6 +36,9 @@ jobs:
   docker-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # 失败时把日志推到 ci-logs 分支需要写权限
+    permissions:
+      contents: write
 
     steps:
       - name: 检出代码
@@ -103,6 +106,36 @@ jobs:
           docker compose logs --tail=200 app || true
           docker compose logs --tail=100 mysql || true
           docker compose logs --tail=50 redis || true
+
+      - name: 失败时把日志回传到 ci-logs 分支（无 GitHub 登录也能读）
+        if: failure()
+        run: |
+          # 为什么需要这一步：本机/自动化环境往往没有 GitHub 登录态，
+          # 匿名读 Actions 日志是 403、Step Summary 也要登录才能展开，
+          # 结果只能看到"某一步 exit 1"。把日志推到 ci-logs 分支后，
+          # 任何有仓库读权限的人 `git fetch origin ci-logs` 就能看到失败现场。
+          # 每次失败都**强制覆盖**该分支（单提交），仓库不会因此膨胀。
+          # 注意：该分支只含日志，不在本 workflow 的 push 触发路径里，不会造成递归触发。
+          set +e
+          mkdir -p /tmp/ci-logs
+          cp /tmp/docker-e2e.log /tmp/ci-logs/docker-e2e.log 2>/dev/null || echo "(无 /tmp/docker-e2e.log)" > /tmp/ci-logs/docker-e2e.log
+          docker compose ps -a > /tmp/ci-logs/compose-ps.txt 2>&1
+          docker compose logs --tail=400 app > /tmp/ci-logs/app.log 2>&1
+          docker compose logs --tail=200 mysql > /tmp/ci-logs/mysql.log 2>&1
+          cd /tmp/ci-logs
+          git init -q
+          git checkout -q -b ci-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          {
+            echo "run_id: ${{ github.run_id }}"
+            echo "sha: ${{ github.sha }}"
+            echo "run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > meta.txt
+          git add -A
+          git commit -q -m "CI 失败日志：run ${{ github.run_id }}（${{ github.sha }}）"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push -q -f origin ci-logs && echo "日志已推送到 ci-logs 分支：git fetch origin ci-logs"
 
       - name: 成功时写容器状态摘要
         if: success()

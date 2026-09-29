@@ -56,9 +56,11 @@ EOF
 put_json() { send_json PUT "$1" "$2"; }
 post_json() { send_json POST "$1" "$2"; }
 
-# 轮询等待异步审计落库：$1=用例名 $2=期望值 $3=SQL $4=超时秒数(默认 6)
+# 轮询等待异步审计落库：$1=用例名 $2=期望值 $3=SQL $4=超时秒数(默认 10)
+# 超时给 10s：容器环境下每条 SQL 都要经 docker compose exec（约 1s/次），轮询次数会比本地少，
+# 留足余量避免"异步写入稍慢就误判失败"的抖动（BUG7-7 一并记录）。
 wait_sql() {
-  local name="$1" expect="$2" sql="$3" timeout="${4:-6}" got="" deadline
+  local name="$1" expect="$2" sql="$3" timeout="${4:-10}" got="" deadline
   deadline=$(( $(date +%s) + timeout ))
   while [ "$(date +%s)" -le "$deadline" ]; do
     got=$($MYSQL "$sql" | tail -n +2 | tr -d '\r' | head -1)
@@ -82,10 +84,21 @@ wait_sql "A2 查看明码后审计表增行（$N0 → $((N0+1))）" "$((N0+1))" 
 ROW=$($MYSQL "SELECT CONCAT_WS('|', user_id, username, operation, target_type, target_id, result) FROM sys_audit_log WHERE operation='查看员工敏感信息' ORDER BY id DESC LIMIT 1" | tail -n +2 | tr -d '\r')
 check "A3 操作者/对象/结果齐全" "1|admin|查看员工敏感信息|EMPLOYEE|$E1ID|SUCCESS" "$ROW"
 IP=$($MYSQL "SELECT ip FROM sys_audit_log WHERE operation='查看员工敏感信息' ORDER BY id DESC LIMIT 1" | tail -n +2 | tr -d '\r')
-case "$IP" in
-  127.0.0.1|::1|0:0:0:0:0:0:0:1|localhost) echo "PASS | A4 直连场景记录本机 IP（ip=$IP）"; PASS=$((PASS+1));;
-  *) echo "FAIL | A4 ip 异常：$IP"; FAIL=$((FAIL+1));;
-esac
+# 注意（BUG7-7）：这里刻意**不**断言 ip 是 127.0.0.1。
+# 本地跑（jar 在宿主机）直连确实是回环地址，但容器环境里请求经 docker-proxy 进来，
+# 应用看到的对端是 Docker 网关地址（如 172.18.0.1）——那是**正确**的记录结果。
+# 所以断言"记录了合法的 IP 且非空/非 unknown"，具体地址由环境决定；
+# "代理链取最左真实客户端"这条语义由 A8 用显式 X-Forwarded-For 覆盖。
+$PY - "$IP" <<'EOF'
+import re, sys
+ip = (sys.argv[1] or "").strip()
+# IPv4 或 IPv6（含 ::1 / 0:0:0:0:0:0:0:1 / 172.18.0.1）
+pattern = re.compile(r'^(\d{1,3}(\.\d{1,3}){3}|[0-9a-fA-F:]{2,45})$')
+ok = bool(ip) and ip.lower() != "unknown" and bool(pattern.match(ip))
+print(f"PASS | A4 直连场景记录了合法客户端 IP（ip={ip}）" if ok else f"FAIL | A4 ip 异常：{ip!r}")
+sys.exit(0 if ok else 1)
+EOF
+label_ok
 DET=$($MYSQL "SELECT COUNT(*) FROM sys_audit_log WHERE operation='查看员工敏感信息' AND (detail LIKE '%110101199003071234%' OR detail LIKE '%13800000001%' OR detail LIKE '%6222020200112233445%' OR detail LIKE '%18000.00%')" | tail -n +2 | tr -d '\r')
 check "A5 审计 detail 不含任何敏证明文（0 行命中）" 0 "$DET"
 CUR=$($MYSQL "$CNT_SENSITIVE" | tail -n +2 | tr -d '\r')
@@ -233,7 +246,9 @@ for i in $(seq 1 10); do
 done
 ELAPSED=$(( $(date +%s%3N) - START ))
 wait_sql "F1 连续 10 次敏感查看全部落库（异步不丢）" "$((CUR+10))" "SELECT COUNT(*) FROM sys_audit_log"
-[ "$ELAPSED" -lt 6000 ] && { echo "PASS | F2 10 次调用总耗时 ${ELAPSED}ms（审计未把接口拖到不可接受）"; PASS=$((PASS+1)); } \
+# 阈值给 15s：这条只用于兜住"审计把接口拖到不可接受"的明显退化（本地实测约 0.8s，容器环境含 docker-proxy 转发会更慢），
+# 不做精细性能门禁（性能基线在第 8 周压测里单独做）
+[ "$ELAPSED" -lt 15000 ] && { echo "PASS | F2 10 次调用总耗时 ${ELAPSED}ms（审计未把接口拖到不可接受）"; PASS=$((PASS+1)); } \
   || { echo "FAIL | F2 10 次调用耗时 ${ELAPSED}ms"; FAIL=$((FAIL+1)); }
 
 echo "===== G. 现场确认（脚本可重复运行的收尾状态） ====="

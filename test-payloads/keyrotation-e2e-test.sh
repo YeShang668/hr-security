@@ -56,8 +56,8 @@ EOF
 }
 put_json() { send_json PUT "$1" "$2"; }
 post_json() { send_json POST "$1" "$2"; }
-wait_sql() { # 审计异步落库：$1=用例名 $2=期望值 $3=SQL
-  local name="$1" expect="$2" sql="$3" got="" deadline=$(( $(date +%s) + 6 ))
+wait_sql() { # 审计异步落库：$1=用例名 $2=期望值 $3=SQL（超时 10s：容器环境每条 SQL 要经 docker compose exec）
+  local name="$1" expect="$2" sql="$3" got="" deadline=$(( $(date +%s) + 10 ))
   while [ "$(date +%s)" -le "$deadline" ]; do
     got=$($MYSQL "$sql" | tail -n +2 | tr -d '\r' | head -1)
     [ "$got" = "$expect" ] && break
@@ -66,7 +66,7 @@ wait_sql() { # 审计异步落库：$1=用例名 $2=期望值 $3=SQL
   check "$name" "$expect" "$got"
 }
 wait_sql_ge() { # 同上，但只要求"至少 N 条"（同一动作可能被调用多次）
-  local name="$1" min="$2" sql="$3" got="" deadline=$(( $(date +%s) + 6 ))
+  local name="$1" min="$2" sql="$3" got="" deadline=$(( $(date +%s) + 10 ))
   while [ "$(date +%s)" -le "$deadline" ]; do
     got=$($MYSQL "$sql" | tail -n +2 | tr -d '\r' | head -1)
     [ -n "$got" ] && [ "$got" -ge "$min" ] 2>/dev/null && break
