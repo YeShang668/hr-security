@@ -68,16 +68,33 @@ jobs:
         env:
           PYTHON: python3
         run: |
-          set -o pipefail
+          # 刻意不用 set -e / pipefail 直接中断：先把结果写进 Step Summary 再决定退出码。
+          # 原因（第 7 周踩坑）：GitHub 的日志查看需要登录，匿名 API 取日志是 403；
+          # 而 Step Summary 是公开可见的，所以"失败用例清单 + 日志尾部"必须写进 Summary，
+          # 否则在没登录的环境里根本看不出是哪条用例失败、为什么失败。
+          set +e
           bash test-payloads/docker-e2e-test.sh 2>&1 | tee /tmp/docker-e2e.log
-          # 把各脚本的"结果：PASS=x FAIL=y"汇总写进 CI 摘要，网页上直接可看，无需下载日志
+          EXIT=${PIPESTATUS[0]}
           {
             echo '## 容器环境全量回归结果'
             echo ''
             echo '```'
             grep -aE '结果：PASS|Docker 环境回归结果' /tmp/docker-e2e.log || true
             echo '```'
+            if [ "$EXIT" != "0" ]; then
+              echo '## 失败用例（FAIL 行）'
+              echo ''
+              echo '```'
+              grep -a '^FAIL' /tmp/docker-e2e.log || echo '(没有 FAIL 行：可能是脚本提前异常退出，见下方日志尾部)'
+              echo '```'
+              echo '## 日志尾部 100 行'
+              echo ''
+              echo '```'
+              tail -100 /tmp/docker-e2e.log || true
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          exit $EXIT
 
       - name: 失败时导出容器与数据库日志
         if: failure()
