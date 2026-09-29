@@ -10,7 +10,12 @@
 # 跑什么：test-payloads/docker-e2e-test.sh（自动 docker compose up -d --build →
 #         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 176 用例：20+11+25+40+50+30）
 # 触发：手动（workflow_dispatch）或 push 改动到相关路径
-# 失败排查：可手动执行末尾的 docker compose logs app
+#
+# 步骤刻意拆成"构建 / 启动+等就绪 / 回归"三段（第 7 周踩坑后调整）：
+#   合成一段时，"镜像构建失败"和"测试有失败用例"都只表现为"某一步 exit 1"，
+#   必须登录下载完整日志才能分辨（而 GitHub 上日志查看需要登录）。
+#   拆开后，失败的步骤名本身就是诊断结论：构建失败 → 第 1 段红；起不来 → 第 2 段红；
+#   用例失败 → 第 3 段红（此时 Step Summary 里能看到各脚本 PASS/FAIL）。
 # ============================================
 name: docker-regression
 
@@ -23,6 +28,7 @@ on:
       - 'docker-build/**'
       - 'docker-compose.yml'
       - 'Dockerfile'
+      - 'pom.xml'
       - 'test-payloads/**'
       - '.github/workflows/docker-regression.yml'
 
@@ -42,7 +48,23 @@ jobs:
           python3 --version
           bash --version | head -1
 
-      - name: 容器一键部署 + 全量回归（176 用例）
+      - name: 构建镜像（构建日志单独可见）
+        run: docker compose build
+
+      - name: 启动容器并等待应用就绪
+        run: |
+          docker compose up -d
+          # 与 docker-e2e-test.sh 里的就绪判断保持一致：能登录即视为就绪（首次 MySQL 初始化 30~60s）
+          for i in $(seq 1 90); do
+            CODE=$(curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/api/auth/login \
+                   -H 'Content-Type: application/json' \
+                   --data-binary @test-payloads/login-admin.json 2>/dev/null || true)
+            if [ "$CODE" = "200" ]; then echo "应用已就绪（第 ${i} 次探测）"; exit 0; fi
+            sleep 2
+          done
+          echo "应用 180s 内未就绪"; docker compose ps; docker compose logs --tail=200 app; exit 1
+
+      - name: 全量回归（176 用例）
         env:
           PYTHON: python3
         run: |
@@ -57,9 +79,21 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 失败时导出应用与数据库日志
+      - name: 失败时导出容器与数据库日志
         if: failure()
         run: |
-          docker compose ps || true
+          docker compose ps -a || true
           docker compose logs --tail=200 app || true
           docker compose logs --tail=100 mysql || true
+          docker compose logs --tail=50 redis || true
+
+      - name: 成功时写容器状态摘要
+        if: success()
+        run: |
+          {
+            echo '## 容器状态'
+            echo ''
+            echo '```'
+            docker compose ps
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
