@@ -107,17 +107,19 @@ docker compose down -v           # 彻底重置（删数据卷，下次 up 重�
 | 方式 | 命令 | 覆盖 |
 |---|---|---|
 | IDEA HTTP Client | 打开 `api-test.http` 按顺序点运行 | 手工冒烟 |
-| 本地全量回归 | `bash test-payloads/e2e-test.sh`（20）+ `redis-e2e-test.sh`（11）+ `user-e2e-test.sh`（25）+ `crypto-e2e-test.sh`（40）+ `audit-e2e-test.sh`（50）+ `keyrotation-e2e-test.sh`（30） | RBAC/CRUD + Redis 会话/角色变更/登出 + 用户管理/禁用踢下线 + 加密/脱敏/可检索/迁移 + **审计埋点/异步/过滤/权限 + 密钥轮换/重加密/停用** |
+| **本地全量回归（推荐）** | `bash test-payloads/local-e2e-test.sh` | 一条命令跑完 176 用例并**逐脚本校验用例数**（自动自检环境 → 注册 zhangsan → 刷新 token → 按序执行下面六个脚本） |
+| 本地分脚本 | `bash test-payloads/e2e-test.sh`（20）+ `redis-e2e-test.sh`（11）+ `user-e2e-test.sh`（25）+ `crypto-e2e-test.sh`（40）+ `audit-e2e-test.sh`（50）+ `keyrotation-e2e-test.sh`（30） | RBAC/CRUD + Redis 会话/角色变更/登出 + 用户管理/禁用踢下线 + 加密/脱敏/可检索/迁移 + **审计埋点/异步/过滤/权限 + 密钥轮换/重加密/停用** |
 | Docker 一键回归 | `bash test-payloads/docker-e2e-test.sh`（自动起容器并跑满 176 用例，含容器内"KEK 缺失启动失败"验证） | 部署后同一套用例全量回归 |
-| 容器回归（免本机虚拟化） | GitHub Actions → workflow `docker-regression`（push 自动触发或手动 Run） | 同上；本机 Docker 不可用时的替代路径 |
+| 容器回归（免本机虚拟化） | GitHub Actions → workflow `docker-regression`（push 自动触发或手动 Run） | 同上；本机 Docker 不可用时的替代路径。**CI 失败时日志会自动推到 `ci-logs` 分支**（`git fetch origin ci-logs` 读失败现场，无需 GitHub 登录） |
 
-**当前结果（2026-09-29）：本地 176/176 通过（20 + 11 + 25 + 40 + 50 + 30）；第 6 周容器环境 96/96 通过（GitHub Actions 实测），第 7 周容器回归见 CI 结果。**
+**当前结果（2026-09-29）：本地 176/176 通过（20 + 11 + 25 + 40 + 50 + 30）；容器环境 176/176 待复验。**
 
 - 本地实测：jar + 本机 MySQL/Redis，测试前重灌 `sql/init.sql` 并**重启应用**（让 DEK 引导重新执行）；
-- **容器实测：`docker-e2e-test.sh` 已在 GitHub Actions（ubuntu runner，原生 Docker + Compose v2）跑通**，
-  脚本内部有硬断言（`TOTAL_PASS != 176 || TOTAL_FAIL > 0` 即 exit 1），因此 CI 成功 = 容器环境 176/176；
-  各脚本的 `结果：PASS=x FAIL=y` 会汇总到 CI 的 Step Summary，点进去即可看到
-  （[run 记录](https://github.com/YeShang668/hr-security/actions/workflows/docker-regression.yml)）。
+- **容器环境说明（诚实记录）**：第 7 周的容器回归这一轮**未拿到绿灯**，失败全部在"测试侧/CI 侧"，功能本身本地与浏览器均验证通过：
+  - BUG7-7：审计用例断言"直连 ip=回环地址"，而容器里请求经 docker-proxy、应用看到的是 Docker 网关地址（那是正确行为）→ 断言已改为"记录了合法 IP"；
+  - BUG7-8：审计脚本漏定义 `label_ok`，该用例"既没 PASS 也没 FAIL"、总数悄悄少 1 → 已补定义，并给两套总控脚本加了逐脚本用例数校验；
+  - 基础设施：某次 run 的 `docker compose up -d` 因拉基础镜像瞬时失败而中断（且被 `bash -e` 吞掉了现场）→ 已拆出独立的 `docker compose pull` 步骤 + up 失败即打印现场并落盘。
+  修复都在本地（领先远端 2 个提交），推送后复验，详见 `docs/week7-bugfix-log.md` BUG7-7/7-8 与上级目录《周末项目工作前准备-2026-10-10.md》第 0 节。
 - 触发方式：`.github/workflows/docker-regression.yml`（push 相关路径自动触发，也可在 Actions 页面手动 Run workflow）。
 - **测试顺序有硬要求**：`keyrotation-e2e-test.sh` 会轮换密钥并停用旧密钥，**必须最后跑**；
   `audit-e2e-test.sh` 会临时禁用/改角色 zhangsan，脚本结尾自动恢复。

@@ -53,10 +53,10 @@ jobs:
 
       - name: 构建镜像（构建日志单独可见）
         run: |
-          # 先拉基础镜像（mysql/redis/jre），失败要在**这一步**暴露：
-          # 第 7 周 run 7 的失败就是 up 阶段拉不到 mysql/redis 镜像（Docker Hub 瞬时问题），
-          # 因为整个 up 被 bash -e 立即中断，且那时还没有任何容器，现场只剩"空"。
-          docker compose pull --ignore-buildable || { echo '!! 基础镜像拉取失败（多为 Docker Hub 瞬时问题，可重试）'; exit 1; }
+          # 先拉基础镜像（mysql/redis）——它们只在 up 阶段用到，一旦拉取失败整个 up 就中断，
+          # 而 bash -e 会把现场一起吞掉（第 7 周 run 7 就是这样：零容器、日志全空、无从判断）。
+          # 这里显式拉取并把失败提前暴露；用服务名而不是 --ignore-buildable（后者的 flag 依赖 compose 版本）。
+          docker compose pull mysql redis || { echo '!! 基础镜像拉取失败（多为 Docker Hub 瞬时问题，可重试）'; exit 1; }
           docker compose build
 
       - name: 启动容器并等待应用就绪
