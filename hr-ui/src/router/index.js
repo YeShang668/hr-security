@@ -8,6 +8,7 @@ import MainLayout from '@/layout/MainLayout.vue'
  *   /users     → 仅 ADMIN（后端 UserController 全部 hasRole('ADMIN')）
  *   /employees → ADMIN 可增删改、EMPLOYEE 只读（页面内用 isAdmin 控制按钮显隐）
  *   /depts     → 同上
+ *   /audit-logs、/keys → 仅 ADMIN（第 7 周：审计记录能看到"谁看了谁"，密钥管理能决定数据读不读得出来）
  */
 const routes = [
   {
@@ -44,6 +45,18 @@ const routes = [
         name: 'users',
         component: () => import('@/views/UserManageView.vue'),
         meta: { title: '用户管理', icon: 'Setting', roles: ['ADMIN'] }
+      },
+      {
+        path: 'audit-logs',
+        name: 'auditLogs',
+        component: () => import('@/views/AuditLogView.vue'),
+        meta: { title: '审计日志', icon: 'Document', roles: ['ADMIN'] }
+      },
+      {
+        path: 'keys',
+        name: 'keys',
+        component: () => import('@/views/KeyManageView.vue'),
+        meta: { title: '密钥管理', icon: 'Key', roles: ['ADMIN'] }
       }
     ]
   },

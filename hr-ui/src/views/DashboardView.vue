@@ -41,7 +41,7 @@
       <el-col :span="12">
         <el-card shadow="never">
           <template #header>
-            <span class="card-title">本周演示剧本（第 6 周：敏感字段加密 + 动态脱敏）</span>
+            <span class="card-title">本周演示剧本（第 7 周：审计日志 + KEK/DEK 密钥管理）</span>
           </template>
           <el-timeline>
             <el-timeline-item
@@ -76,7 +76,8 @@
       <el-alert type="warning" :closable="false" class="mt-12">
         <template #title>
           前端隐藏菜单只是"看不见"，不是"不能做"：权限判断在后端
-          @PreAuthorize（例如 /api/users 仅 ADMIN），普通用户即使手工调接口也会被拦成 403。
+          @PreAuthorize（例如 /api/users、/api/audit-logs、/api/admin/keys 仅 ADMIN），
+          普通用户即使手工调接口也会被拦成 403。
         </template>
       </el-alert>
     </el-card>
@@ -92,23 +93,24 @@ const userStore = useUserStore()
 const myMenus = computed(() => {
   const menus = ['首页']
   if (userStore.hasRole('ADMIN') || userStore.hasRole('EMPLOYEE')) menus.push('员工管理', '部门管理')
-  if (userStore.isAdmin) menus.push('用户管理')
+  if (userStore.isAdmin) menus.push('用户管理', '审计日志', '密钥管理')
   return menus
 })
 
 const demoSteps = [
-  { tag: '1. 直连数据库看密文', text: '员工管理列表里的手机号/身份证/银行卡/工资都是脱敏值；直接查库看到的是 v1:k1:... 密文，明文列已不存在', type: 'primary' },
-  { tag: '2. 查看完整信息（显式明文）', text: '点「查看完整信息」才返回明文，后端校验 employee:sensitive:read 权限；zhangsan 没有该按钮，接口直调也是 403', type: 'warning' },
-  { tag: '3. 密文不可模糊查', text: '关键字框搜手机号/身份证搜不到（密文没法 like）；改用「身份证」精确查询，走 HMAC 哈希匹配命中', type: 'success' },
-  { tag: '4. 历史数据加密迁移', text: '模拟旧系统明文表 legacy_employee_plain → 一键 /api/admin/crypto/backfill 加密刷入，重复执行 migrated=0（幂等）', type: 'danger' },
-  { tag: '5. 篡改即被发现', text: '手工改一位密文，GCM 认证标签校验失败，接口直接报错而不是返回乱码（完整性保护）', type: 'info' }
+  { tag: '1. 看一眼敏感明文', text: '员工管理点「查看完整信息」——这一步在审计里留痕；换 zhangsan 登录连按钮都没有，直调接口 403', type: 'primary' },
+  { tag: '2. 审计日志查这一步', text: '「审计日志」页按操作类型搜"敏感"：能看到谁(admin)、何时、看了哪个员工、来自哪个 IP；明细只有字段名没有明文值', type: 'warning' },
+  { tag: '3. 失败也有记录', text: '把筛选切到"失败"：越权尝试、被红线拦下的操作（如禁用自己）同样有记录，还带失败原因', type: 'info' },
+  { tag: '4. 翻账也留痕', text: '每次查询审计日志本身也会写一条审计（operation=查询审计日志），避免"内鬼先把账翻一遍"成为盲区', type: 'info' },
+  { tag: '5. 轮换密钥不停机', text: '「密钥管理」点轮换：新密文立刻用 k2，老密文（k1/RETIRED）照样读得出；再点重加密，残留归零，最后停用 k1（还有残留会被拒绝）', type: 'danger' },
+  { tag: '6. 密钥材料不落库', text: 'sys_data_key 里只有被 KEK 信封加密后的 DEK 密文；KEK 本身在环境变量里，换 KEK 会直接报错而不是静默解不开', type: 'success' }
 ]
 
 const securityPoints = [
-  { title: '字段级加密', desc: 'AES-256-GCM（JDK javax.crypto）+ 每次随机 12 字节 IV + 128 位认证标签', icon: 'Lock' },
-  { title: '动静自动加解密', desc: 'MyBatis-Plus TypeHandler 接管读写，业务代码只见明文、库里只有密文', icon: 'Switch' },
-  { title: '动态脱敏', desc: '列表/详情一律脱敏（连 ADMIN 也一样），明文只从一次显式请求的出口出', icon: 'View' },
-  { title: '可检索性设计', desc: '身份证存 HMAC-SHA256 盲索引，精确查询与唯一校验都能做，且不可逆', icon: 'Search' }
+  { title: '审计可追责', desc: 'AOP 注解埋点（明文查看/权限变更/密钥运维），记录 谁·何时·做了什么·对什么·来自哪', icon: 'Document' },
+  { title: '异步不拖慢业务', desc: '@Async 自定义线程池落库；上下文（用户/IP）在切面先从 ThreadLocal 取出来再传参', icon: 'Timer' },
+  { title: 'KEK/DEK 两级密钥', desc: 'KEK 只在环境变量（不落库），DEK 密文存库；换 DEK 不动 KEK、不停机', icon: 'Key' },
+  { title: '轮换四步闭环', desc: '新密钥上线 → 老密文仍可解 → 分批幂等重加密 → 残留为 0 才允许停用旧密钥', icon: 'Refresh' }
 ]
 </script>
 

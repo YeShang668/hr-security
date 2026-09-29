@@ -2,6 +2,8 @@ package com.hrsecurity.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hrsecurity.audit.AuditLog;
+import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
 import com.hrsecurity.common.PageResult;
 import com.hrsecurity.common.ResultCode;
@@ -74,6 +76,13 @@ public class UserServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
         return new PageResult<>(page.getTotal(), records);
     }
 
+    /**
+     * 启用/禁用账号。第 7 周加审计：**权限变更本身就是审计对象**——
+     * "谁把谁的账号禁用了"是事后追责里最常被问的一句话。
+     * 注意审计失败也要记：比如"试图禁用自己"被红线拦下，那条 FAILURE 记录同样有价值。
+     */
+    @AuditLog(operation = "变更账号状态", targetType = "USER", targetIdArgIndex = 0,
+            detail = "禁用会同时删除该用户全部登录会话与权限缓存（踢下线）")
     @Override
     @Transactional
     public void updateStatus(Long id, Integer status, Long currentUserId) {
@@ -98,12 +107,19 @@ public class UserServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
             sessionService.removeAllSessions(id);
             roleService.evict(id);
         }
+        AuditTrace.append("账号 " + user.getUsername() + " 状态改为 " + (status == 1 ? "启用(1)" : "禁用(0)"));
     }
 
+    /**
+     * 覆盖式分配角色。审计记录"谁给谁分配了哪些角色"——
+     * 提权（给普通账号加 ADMIN）是最需要留痕的一类操作。
+     */
+    @AuditLog(operation = "分配用户角色", targetType = "USER", targetIdArgIndex = 0,
+            detail = "覆盖式分配，改完旧 token 立即生效（已删角色与权限缓存）")
     @Override
     @Transactional
     public void assignRoles(Long id, List<Long> roleIds, Long currentUserId) {
-        getOrThrow(id, "用户不存在");
+        SysUser user = getOrThrow(id, "用户不存在");
         // 不能改自己的角色：防止管理员把自己降成 EMPLOYEE 后再也回不来
         if (Objects.equals(id, currentUserId)) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "不能修改当前登录账号的角色");
@@ -127,6 +143,8 @@ public class UserServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
         }
         // 删角色缓存：该用户下一次请求就拿到新角色（旧 token 立即生效，无需重登）
         roleService.evict(id);
+        AuditTrace.append("账号 " + user.getUsername() + " 角色：" + roles.stream()
+                .map(SysRole::getRoleCode).sorted().collect(Collectors.joining("/")));
     }
 
     /**

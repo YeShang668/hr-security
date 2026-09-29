@@ -140,9 +140,9 @@ MyBatis-Plus 默认的实体结果映射**不带**自定义 TypeHandler，只在
 **明文源的处理**：迁移完成后应 `DROP TABLE legacy_employee_plain`（或清空），
 否则"旧表还是明文"，加密白做。这一步是运维动作，写在 README 与本节里。
 
-## 8. 密钥管理现状与下周计划
+## 8. 密钥管理现状与演进（第 6 周写法 + 第 7 周落地情况）
 
-**本周（第 6 周）**：
+**第 6 周**：
 
 - `KeyProvider` 接口 + `EnvKeyProvider` 实现：密钥来自环境变量 `AES_MASTER_KEY`（32 字节 Base64），
   其次本地未提交的 `application-local.yml`；**两处都缺则启动失败**（fail fast）。
@@ -152,11 +152,20 @@ MyBatis-Plus 默认的实体结果映射**不带**自定义 TypeHandler，只在
 **为什么必须 fail fast**：密钥一旦有"默认值"，就一定会有人带着默认密钥上线，
 这等价于库里所有密文可解——比不加密更危险（有种虚假的安全感）。
 
-**下周（第 7 周）**：KEK/DEK 两级密钥
-——DEK 密文存库、由环境变量里的 KEK 解密得到，实现"密钥本身也不落明文"；
-再加密钥轮换（新数据用 k2、老数据按 keyId 用 k1 解，后台批量重加密）。
-届时只需换 `KeyProvider` 的实现，`AesGcmCipher`、TypeHandler、业务代码**一行都不改**——
-这就是本周先抽接口的原因。
+**第 7 周已落地（本节当时的"下周计划"，实际执行结果）**：
+
+- 两级密钥：`AES_MASTER_KEY` 的语义变为 **KEK**（只用于信封加密 DEK，不落库），
+  新增 `KekProvider`/`EnvKeyProvider`（KEK 来源）与 `KekDekKeyProvider`（`KeyProvider` 的新实现）；
+  DEK 以密文存 `sys_data_key`，轮换/重加密/停用接口在 `/api/admin/keys`。
+- **"业务代码一行未改"的预测被验证**：`AesGcmCipher`、`AesTypeHandler`、所有 Service 与 Controller
+  确实一行都没动——只是换了一个 `KeyProvider` 实现类。这是第 6 周抽取接口的直接收益。
+- 一个实现层的补充：算法原语下沉成了 `AesGcmCodec`（静态工具类）。
+  原因是 `KekDekKeyProvider` 也要用 GCM 加密 DEK，若复用 `AesGcmCipher` 会形成
+  `AesGcmCipher → KeyProvider → AesGcmCipher` 的循环依赖。
+- 完整设计、轮换四步、重加密实现与故障处理见 [key-management.md](key-management.md)。
+- 注意一个第 6 周文档未预料到的点：**检索哈希盐继续绑定 KEK 而不是 DEK**。
+  若绑 DEK，轮换时 `id_card_hash` 全库失效（检索与唯一校验立刻不可用）；
+  绑 KEK 则轮换 DEK 时哈希列完全不受影响——这是两级密钥的一个实际收益。
 
 ## 9. 已知取舍与边界（诚实记录，面试官喜欢听）
 
@@ -164,7 +173,7 @@ MyBatis-Plus 默认的实体结果映射**不带**自定义 TypeHandler，只在
 |---|---|---|
 | 密文损坏的表现 | **读整行失败**（fail loud，返回 500，日志有"完整性校验失败"） | 不静默降级返回乱码/null，避免掩盖密钥错配或数据被篡改；代价是该行修复前无法通过接口读取，需运维清掉坏密文后重录 |
 | 单行坏数据影响面 | 该行所在的列表查询整体失败 | 生产可考虑"按行降级 + 告警 + 修复队列"；毕设演示选择"宁可报错也不给错数据" |
-| 密钥轮换 | 未做（下周） | 密文已带 keyId，轮换无需改格式 |
+| 密钥轮换 | ✅ 第 7 周完成（KEK/DEK + 四步轮换） | 密文自带的 keyId 是轮换的基础；见 key-management.md |
 | 加密字段的模糊查询 | 不支持（只能精确查） | 通用替代方案是分词索引/网关级加密搜索，超出毕设范围，写入文档作为权衡 |
 | 迁移触发方式 | ADMIN 接口触发 | 生产更推荐独立一次性 Job/CLI（不进 Web 层）；本项目为便于演示与自动化回归放在 ADMIN 接口，并保证"仅管理员 + 幂等 + 有执行报告"三条 |
 | 前端明文缓存 | 弹窗关闭即丢弃，不写本地存储 | 明文不落 localStorage，减少泄露面 |

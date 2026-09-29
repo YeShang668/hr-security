@@ -1,6 +1,8 @@
 package com.hrsecurity.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.hrsecurity.audit.AuditLog;
+import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
 import com.hrsecurity.common.ResultCode;
 import com.hrsecurity.crypto.FieldHashUtil;
@@ -40,6 +42,14 @@ public class CryptoMigrationServiceImpl implements CryptoMigrationService {
     private final SysEmployeeMapper employeeMapper;
     private final FieldHashUtil fieldHashUtil;
 
+    /**
+     * 历史数据加密迁移。第 7 周加审计：这是"数据级运维动作"——
+     * 一次调用可能把全表的敏感字段重写一遍，必须能回答"谁在什么时候触发过迁移"。
+     * 执行报告（扫描/迁移/跳过/未匹配条数）也一并写进审计 detail，
+     * 这样审计日志本身就能说明"这次动了多少数据"，不必去翻应用日志。
+     */
+    @AuditLog(operation = "历史数据加密迁移", targetType = "CRYPTO",
+            detail = "数据级运维动作：读旧系统明文表 → 字段加密刷入（幂等，可重复执行）")
     @Override
     @Transactional
     public BackfillResult backfill() {
@@ -87,6 +97,7 @@ public class CryptoMigrationServiceImpl implements CryptoMigrationService {
             migrated++;
         }
         BackfillResult result = new BackfillResult(legacyRows.size(), migrated, skipped, unmatched);
+        AuditTrace.append("执行报告 " + result);
         log.info("历史数据加密迁移完成：{}", result);
         return result;
     }

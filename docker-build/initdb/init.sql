@@ -3,6 +3,7 @@
 -- 挂载到 mysql 容器的 /docker-entrypoint-initdb.d/，仅当数据卷为空（首次启动）时执行一次
 -- 注意：与本地 sql/init.sql 的区别——不含 DROP TABLE（空库无需删），全部 IF NOT EXISTS 幂等
 -- 第 6 周：sys_employee 敏感字段改密文列（AES-256-GCM）+ 身份证检索哈希列 + 模拟旧系统明文表
+-- 第 7 周：sys_audit_log（审计日志）+ sys_data_key（KEK/DEK 的 DEK 密文表）
 -- 表结构与 sql/init.sql 保持一致（utf8mb4 红线）
 -- ============================================
 
@@ -134,3 +135,38 @@ INSERT INTO legacy_employee_plain (emp_no, id_card, phone, bank_card, salary) VA
   ('E001', '110101199003071234', '13800000001', '6222020200112233445', '18000.00'),
   ('E002', '310104199205206789', '13800000002', '6217001210099887766', '16500.50'),
   ('E003', '500103199801153456', '13800000003', '6228480402564890018', '21000.00');
+
+-- ---------- 第 7 周：审计日志表（与 sql/init.sql 一致，见 docs/audit-design.md） ----------
+-- 谁（user_id+username 冗余，改名后仍可追溯）、何时、做了什么、对什么做的、来自哪（ip+ua）。
+-- 红线：detail 只记"看过/改过什么"，绝不写入身份证/手机号等敏感明文。
+CREATE TABLE IF NOT EXISTS sys_audit_log (
+  id          BIGINT       PRIMARY KEY AUTO_INCREMENT,
+  user_id     BIGINT       DEFAULT NULL COMMENT '操作者用户id（取不到时为 NULL）',
+  username    VARCHAR(50)  DEFAULT NULL COMMENT '操作者用户名（冗余，改名/删除后仍可追溯）',
+  operation   VARCHAR(100) NOT NULL COMMENT '操作类型，如 查看员工敏感信息',
+  target_type VARCHAR(50)  DEFAULT NULL COMMENT '操作对象类型：EMPLOYEE/DEPT/USER/CRYPTO/KEY',
+  target_id   VARCHAR(64)  DEFAULT NULL COMMENT '操作对象id（字符串，兼容非数字主键）',
+  detail      VARCHAR(500) DEFAULT NULL COMMENT '补充说明（禁止写入敏感明文）',
+  result      VARCHAR(16)  NOT NULL DEFAULT 'SUCCESS' COMMENT 'SUCCESS/FAILURE：失败也记，越权尝试同样有价值',
+  ip          VARCHAR(64)  DEFAULT NULL COMMENT '客户端 IP（优先取 X-Forwarded-For 首个地址）',
+  user_agent  VARCHAR(255) DEFAULT NULL COMMENT '客户端 User-Agent',
+  created_at  DATETIME     NOT NULL COMMENT '事件发生时间（异步落库，记事件时间）',
+  KEY idx_audit_created_at (created_at),
+  KEY idx_audit_user_id (user_id),
+  KEY idx_audit_operation (operation)
+) COMMENT '审计日志表：敏感数据访问与权限变更的追责依据';
+
+-- ---------- 第 7 周：DEK 表（KEK/DEK 两级密钥，见 docs/key-management.md） ----------
+-- KEK 只在环境变量/KMS 里（不落库）；DEK 真正加密业务字段，以 KEK 加密后的密文形式存这里。
+-- 本表不预置种子行：encrypted_dek 与当前 KEK 绑定，写死进 SQL 等于提交密钥材料；
+-- 首次启动由 KekDekKeyProvider 引导生成 k1。
+CREATE TABLE IF NOT EXISTS sys_data_key (
+  id            BIGINT       PRIMARY KEY AUTO_INCREMENT,
+  key_id        VARCHAR(32)  NOT NULL COMMENT 'DEK 版本号，写入密文 v1:{keyId}:{iv}:{ct}',
+  encrypted_dek VARCHAR(512) NOT NULL COMMENT 'DEK 密文（用 KEK 做 AES-256-GCM 信封加密）',
+  status        VARCHAR(16)  NOT NULL COMMENT 'ACTIVE / RETIRED / DISABLED',
+  created_at    DATETIME     NOT NULL COMMENT '该 DEK 上线时间',
+  retired_at    DATETIME     DEFAULT NULL COMMENT '退役时间',
+  UNIQUE KEY uk_data_key_id (key_id),
+  KEY idx_data_key_status (status)
+) COMMENT '数据加密密钥表：DEK 仅以 KEK 加密后的密文形式落库';

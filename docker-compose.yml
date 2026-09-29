@@ -69,9 +69,12 @@ services:
       REDIS_PORT: "6379"
       # 演示用开发密钥（长度>32字节）。生产：openssl rand -base64 48 生成后 export JWT_SECRET
       JWT_SECRET: ${JWT_SECRET:-HrSec-Docker-Dev-only-9f3a2b7c4d8e1f6a0b5c3d7e9f2a4b6c8d0e1f3a5b7c9d1e3f5a}
-      # 敏感字段 AES-256-GCM 主密钥：32 字节 Base64（这里是演示用固定密钥，
-      # 生产必须 openssl rand -base64 32 生成后 export AES_MASTER_KEY，并由密钥管理服务托管）
+      # KEK（密钥加密密钥，第 7 周起）：32 字节 Base64，只用于信封加密 DEK，不直接加密业务字段。
+      # 这里是演示用固定密钥；生产必须 openssl rand -base64 32 生成后 export AES_MASTER_KEY，
+      # 并由 KMS/密钥管理服务托管（docs/key-management.md）。
+      # 首次启动若 sys_data_key 为空，应用会引导生成第一把 DEK（keyId=k1，日志有 WARN 提示）。
       AES_MASTER_KEY: ${AES_MASTER_KEY:-NlxSCJlKMN9IIuBbH3dufWfZbGIa9QWMlCQC+DD4gs8=}
+      AES_KEK_ID: ${AES_KEK_ID:-kek1}
       AES_KEY_ID: ${AES_KEY_ID:-k1}
       TZ: Asia/Shanghai
     ports:

@@ -24,9 +24,13 @@ import java.util.HexFormat;
  * 加一个密钥（盐）后，攻击者即使拿到数据库也造不出表——除非同时拿到密钥。
  * 为什么不用可逆加密做检索：那等于把"可检索"降级成"可解密"，失去了哈希单向的价值。
  *
- * 哈希密钥来源：环境变量 ID_HASH_SALT 优先；未配置时由 AES 主密钥做**域分隔派生**
- * （SHA-256("hr-security:id-card-hash:v1" + 主密钥)），这样不必多管一个密钥，
- * 又不会与加密密钥直接共用。注意：盐/主密钥变了，历史哈希全部失效，需重建索引列。
+ * 哈希密钥来源：环境变量 ID_HASH_SALT 优先；未配置时由 **KEK** 做**域分隔派生**
+ * （SHA-256("hr-security:id-card-hash:v1" + KEK)），这样不必多管一个密钥，
+ * 又不会与加密密钥直接共用。注意：盐/KEK 变了，历史哈希全部失效，需重建索引列。
+ *
+ * 第 7 周注意：哈希盐刻意继续从 **KEK** 派生（而不是 DEK）——
+ * DEK 一旦轮换，如果盐跟着变，id_card_hash 全库失效（检索与唯一校验立刻不可用）。
+ * 哈希只与 KEK 绑定，轮换 DEK 时哈希列完全不受影响，这也是"两级密钥"的一个实际收益。
  */
 @Slf4j
 @Component
@@ -41,7 +45,7 @@ public class FieldHashUtil {
     @Value("${crypto.hash-salt:}")
     private String hashSaltConfig;
 
-    private final KeyProvider keyProvider;
+    private final KekProvider kekProvider;
 
     private byte[] hashKey;
 
@@ -56,13 +60,9 @@ public class FieldHashUtil {
             log.info("检索哈希密钥来源：显式盐（ID_HASH_SALT / crypto.hash-salt）");
             return;
         }
-        // 未显式配置：从主密钥做域分隔派生（EnvKeyProvider 已保证主密钥存在且为 32 字节）
-        if (keyProvider instanceof EnvKeyProvider envProvider) {
-            this.hashKey = EnvKeyProvider.domainSeparatedKey(envProvider.rawKey(), DOMAIN);
-            log.info("检索哈希密钥来源：由 AES 主密钥域分隔派生（未配置 ID_HASH_SALT）");
-            return;
-        }
-        throw new IllegalStateException("检索哈希密钥未配置：请设置 ID_HASH_SALT 或在 application-local.yml 配置 crypto.hash-salt");
+        // 未显式配置：从 KEK 做域分隔派生（EnvKeyProvider 已保证 KEK 存在且为 32 字节）
+        this.hashKey = EnvKeyProvider.domainSeparatedKey(kekProvider.kek(), DOMAIN);
+        log.info("检索哈希密钥来源：由 KEK 域分隔派生（未配置 ID_HASH_SALT），与 DEK 轮换解耦");
     }
 
     /** 计算可检索哈希（小写十六进制，64 位）。null/空串返回 null，不产生"空值的哈希" */

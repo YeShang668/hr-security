@@ -3,13 +3,7 @@ package com.hrsecurity.crypto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import javax.crypto.AEADBadTagException;
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
@@ -26,35 +20,23 @@ import java.util.Base64;
  * 密文格式（自描述，与密钥管理演进兼容）：
  *   v1:{keyId}:{ivBase64}:{cipherBase64}
  *   版本号 v1 → 将来换算法（如国密 SM4）可并存；
- *   keyId    → 密钥轮换时老密文仍可解；
+ *   keyId    → 密钥轮换时老密文仍可解（第 7 周起 keyId 指向 sys_data_key 里的 DEK）；
  *   IV 与密文一起存（IV 不需要保密，但必须唯一）。
+ *
+ * 第 7 周变化：算法原语下沉到 {@link AesGcmCodec}（与 DEK 信封加密共用），
+ * 本类只负责"密钥挑选（调 KeyProvider）+ 信封格式拼装"。
+ * 业务代码（Service/TypeHandler）一行没改——这正是第 6 周先抽 KeyProvider 接口的目的。
  */
 @Component
 @RequiredArgsConstructor
 public class AesGcmCipher {
 
-    private static final String TRANSFORMATION = "AES/GCM/NoPadding";
-
-    /** GCM 推荐 IV 长度 96 位（12 字节） */
-    private static final int IV_BYTES = 12;
-
-    /** 认证标签 128 位 */
-    private static final int TAG_BITS = 128;
-
-    /** 密文格式版本号 */
-    private static final String VERSION = "v1";
-
-    /** 分隔符：Base64 字母表不含 ':'，可安全 split */
-    private static final String SEP = ":";
-
     private static final int PARTS = 4;
-
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final KeyProvider keyProvider;
 
     /**
-     * 加密：明文 → v1:{keyId}:{iv}:{ct}
+     * 加密：明文 → v1:{keyId}:{iv}:{ct}，其中 keyId = 当前活跃 DEK。
      * null / 空串按"未填写"处理直接返回，不产生"空值的密文"（避免列表里出现无意义的密文串）。
      */
     public String encrypt(String plain) {
@@ -62,15 +44,16 @@ public class AesGcmCipher {
             return plain;
         }
         String keyId = keyProvider.currentKeyId();
-        byte[] iv = new byte[IV_BYTES];
-        RANDOM.nextBytes(iv);
-        byte[] cipherText = doFinal(Cipher.ENCRYPT_MODE, keyProvider.key(keyId), iv, bytes(plain));
-        return VERSION + SEP + keyId + SEP + b64(iv) + SEP + b64(cipherText);
+        byte[] iv = AesGcmCodec.newIv();
+        byte[] cipherText = AesGcmCodec.encrypt(keyProvider.key(keyId), iv, bytes(plain));
+        return AesGcmCodec.VERSION + AesGcmCodec.SEP + keyId + AesGcmCodec.SEP
+                + b64(iv) + AesGcmCodec.SEP + b64(cipherText);
     }
 
     /**
      * 解密：v1:{keyId}:{iv}:{ct} → 明文。
-     * 格式非法、密钥不匹配、密文被篡改（认证标签校验失败）都会抛 IllegalStateException。
+     * 密钥按密文自带的 keyId 取（轮换后老密文依然解得开），
+     * keyId 未知 / 已停用 / 密文被篡改都会抛 IllegalStateException。
      */
     public String decrypt(String stored) {
         if (stored == null || stored.isEmpty()) {
@@ -81,33 +64,26 @@ public class AesGcmCipher {
             // 直接报错让人发现"这行没迁移"，避免把明文当密文一路带着跑
             throw new IllegalStateException("字段不是合法的 v1 密文格式，疑似明文或格式损坏：" + brief(stored));
         }
-        String[] parts = stored.split(SEP);
+        String[] parts = stored.split(AesGcmCodec.SEP);
         if (parts.length != PARTS) {
             throw new IllegalStateException("密文格式非法（应为 v1:keyId:iv:ct）：" + brief(stored));
         }
-        byte[] key = keyProvider.key(parts[1]);
-        byte[] iv = unb64(parts[2]);
-        byte[] cipherText = unb64(parts[3]);
-        byte[] plain = doFinal(Cipher.DECRYPT_MODE, key, iv, cipherText);
+        byte[] plain = AesGcmCodec.decrypt(keyProvider.key(parts[1]), unb64(parts[2]), unb64(parts[3]));
         return new String(plain, StandardCharsets.UTF_8);
     }
 
-    /** 该值是否为本格式的密文（迁移幂等判断用） */
+    /** 该值是否为本格式的密文（迁移/重加密的判断依据） */
     public boolean isEncrypted(String value) {
-        return value != null && value.startsWith(VERSION + SEP);
+        return value != null && value.startsWith(AesGcmCodec.VERSION + AesGcmCodec.SEP);
     }
 
-    private byte[] doFinal(int mode, byte[] key, byte[] iv, byte[] input) {
-        try {
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(mode, new SecretKeySpec(key, "AES"), new GCMParameterSpec(TAG_BITS, iv));
-            return cipher.doFinal(input);
-        } catch (AEADBadTagException e) {
-            // GCM 的"完整性保护生效"：密文被改 / IV 不匹配 / 密钥不对，都在这里被拦下
-            throw new IllegalStateException("密文完整性校验失败（数据被篡改或密钥不匹配），拒绝解密", e);
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("加解密失败：" + e.getMessage(), e);
+    /** 密文里的 keyId（重加密任务判断"这行是不是老密钥加密的"用）；非密文返回 null */
+    public String keyIdOf(String stored) {
+        if (!isEncrypted(stored)) {
+            return null;
         }
+        String[] parts = stored.split(AesGcmCodec.SEP);
+        return parts.length == PARTS ? parts[1] : null;
     }
 
     private byte[] bytes(String s) {

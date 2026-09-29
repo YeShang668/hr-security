@@ -39,13 +39,17 @@ jwt:
   # 两处都缺失时启动直接报错提示，避免用弱密钥静默运行
 
 crypto:
-  # 敏感字段 AES-256-GCM 加密（第 6 周）。
-  # 主密钥同样**不入主配置**：环境变量 AES_MASTER_KEY 优先，其次本地 application-local.yml 的
-  # crypto.master-key；两处都缺 → 启动失败（EnvKeyProvider 内 fail fast）。
-  # 生成方式：openssl rand -base64 32
+  # 敏感字段 AES-256-GCM 加密（第 6 周）+ KEK/DEK 两级密钥与轮换（第 7 周）。
   #
-  # keyId 是密钥版本号，会写进密文 v1:{keyId}:{iv}:{ct}；
-  # 第 7 周做 KEK/DEK 与密钥轮换时，新数据用新 keyId 加密、老密文按老 keyId 取老密钥解密。
+  # KEK（密钥加密密钥）**不入主配置**：环境变量 AES_MASTER_KEY 优先，其次本地 application-local.yml 的
+  # crypto.master-key；两处都缺 → 启动失败（EnvKeyProvider 内 fail fast）。生成：openssl rand -base64 32
+  # 语义：KEK 只用于"信封加密 DEK"（sys_data_key.encrypted_dek），不直接加密业务字段。
+  kek-id: ${AES_KEK_ID:kek1}
+  #
+  # key-id：**首次引导**（sys_data_key 为空）时生成的 DEK 版本号，会写进密文 v1:{keyId}:{iv}:{ct}。
+  # 之后新数据用哪把密钥加密，由 sys_data_key 里 status=ACTIVE 的那把决定（轮换后是 k2、k3…），
+  # 不再看这个配置——它只是"新环境第一把密钥"的名字。轮换流程见 docs/key-management.md。
   key-id: ${AES_KEY_ID:k1}
-  # 身份证检索哈希盐：留空则由 AES 主密钥域分隔派生（不必额外管一个密钥）
+  # 身份证检索哈希盐：留空则由 KEK 域分隔派生（不必额外管一个密钥）。
+  # 注意：哈希只与 KEK 绑定，轮换 DEK 不会让 id_card_hash 失效。
   # hash-salt: ${ID_HASH_SALT:}

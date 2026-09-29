@@ -329,3 +329,75 @@ Content-Type: application/json
 ### 7.11 权限测试：EMPLOYEE 触发加密迁移 → 403
 POST http://localhost:8080/api/admin/crypto/backfill
 Authorization: Bearer {{empToken}}
+
+### ============================================
+### 8. 审计日志（第 7 周）
+### 说明：审计是**异步落库**，执行完动作后稍等 1~2 秒再查；查询行为本身也会写一条审计
+### ============================================
+
+### 8.1 触发一次"查看敏感明文"（明文唯一出口，最重要的一条埋点）
+GET http://localhost:8080/api/employees/1/sensitive
+Authorization: Bearer {{adminToken}}
+
+### 8.2 审计日志分页查询（仅 ADMIN）
+GET http://localhost:8080/api/audit-logs?page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+### 8.3 按操作类型过滤（URL 编码的"敏感"）：看谁看过明文
+GET http://localhost:8080/api/audit-logs?operation=%E6%95%8F%E6%84%9F&size=20
+Authorization: Bearer {{adminToken}}
+
+### 8.4 只看失败记录：越权尝试 / 被红线拦下的操作（含失败原因）
+GET http://localhost:8080/api/audit-logs?result=FAILURE&size=20
+Authorization: Bearer {{adminToken}}
+
+### 8.5 按对象类型过滤（KEY=密钥运维，CRYPTO=加密迁移，USER=账号权限，EMPLOYEE=员工）
+GET http://localhost:8080/api/audit-logs?targetType=KEY&size=20
+Authorization: Bearer {{adminToken}}
+
+### 8.6 权限边界：EMPLOYEE 查审计日志 → 403；未登录 → 401
+GET http://localhost:8080/api/audit-logs
+Authorization: Bearer {{empToken}}
+
+### 8.7 直连数据库看审计内容（明细只记字段名，绝不含身份证/手机号明文）
+###   SELECT id, username, operation, target_type, target_id, result, ip, detail
+###     FROM sys_audit_log ORDER BY id DESC LIMIT 10;
+
+### ============================================
+### 9. KEK/DEK 密钥管理与轮换（第 7 周）
+### 顺序：9.1 看现状 → 9.2 轮换 → 9.3 重加密 → 9.4 停用（有残留会被拒，先跑 9.3）
+### ============================================
+
+### 9.1 密钥列表（只有 keyId/状态/指纹/时间，不含任何密钥材料）
+GET http://localhost:8080/api/admin/keys
+Authorization: Bearer {{adminToken}}
+
+### 9.2 轮换：新 DEK 上线、旧 DEK 置 RETIRED（老密文仍可解，业务不停机）
+###   → {"previousKeyId":"k1","newKeyId":"k2"}
+POST http://localhost:8080/api/admin/keys/rotate
+Authorization: Bearer {{adminToken}}
+
+### 9.3 存量数据重加密（幂等、可重复调用续跑，直到 remaining=0）
+POST http://localhost:8080/api/admin/keys/reencrypt?batchSize=500&maxBatches=100
+Authorization: Bearer {{adminToken}}
+
+### 9.4 停用旧密钥（还有该 keyId 的密文时返回 400 并回报行数；为 0 才允许）
+POST http://localhost:8080/api/admin/keys/k1/disable
+Authorization: Bearer {{adminToken}}
+
+### 9.5 轮换后仍能读明文（证明老数据没被"锁死"）
+GET http://localhost:8080/api/employees/1/sensitive
+Authorization: Bearer {{adminToken}}
+
+### 9.6 校验：全库不应再有 k1 密文（含离职员工）
+###   SELECT COUNT(*) FROM sys_employee
+###    WHERE id_card_enc LIKE 'v1:k1:%' OR phone_enc LIKE 'v1:k1:%'
+###       OR bank_card_enc LIKE 'v1:k1:%' OR salary_enc LIKE 'v1:k1:%';
+###   → 0
+
+### 9.7 校验：DEK 只以密文形式落库（形如 v1:kek1:iv:ct，绝不是 32/44 字符的裸密钥）
+###   SELECT key_id, LEFT(encrypted_dek, 30), status FROM sys_data_key;
+
+### 9.8 权限边界：EMPLOYEE 查密钥 / 轮换 → 403
+POST http://localhost:8080/api/admin/keys/rotate
+Authorization: Bearer {{empToken}}

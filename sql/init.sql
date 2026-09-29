@@ -3,6 +3,7 @@
 -- 第 1 周：sys_user（认证登录）
 -- 第 2 周：RBAC 四表 + sys_dept + sys_employee（含种子数据）
 -- 第 6 周：员工敏感字段改密文列（AES-256-GCM）+ 身份证检索哈希列 + 模拟旧系统明文表
+-- 第 7 周：sys_audit_log（审计日志）+ sys_data_key（KEK/DEK 两级密钥的 DEK 表）
 -- 执行方式：mysql --default-character-set=utf8mb4 -u root < sql/init.sql
 -- 注意：本脚本会 DROP 重建所有表，仅用于开发环境初始化
 -- ============================================
@@ -13,6 +14,8 @@ CREATE DATABASE IF NOT EXISTS hr_security
 USE hr_security;
 
 DROP TABLE IF EXISTS legacy_employee_plain;
+DROP TABLE IF EXISTS sys_audit_log;
+DROP TABLE IF EXISTS sys_data_key;
 DROP TABLE IF EXISTS sys_role_permission;
 DROP TABLE IF EXISTS sys_user_role;
 DROP TABLE IF EXISTS sys_permission;
@@ -153,3 +156,45 @@ INSERT INTO legacy_employee_plain (emp_no, id_card, phone, bank_card, salary) VA
   ('E001', '110101199003071234', '13800000001', '6222020200112233445', '18000.00'),
   ('E002', '310104199205206789', '13800000002', '6217001210099887766', '16500.50'),
   ('E003', '500103199801153456', '13800000003', '6228480402564890018', '21000.00');
+
+-- ---------- 第 7 周：审计日志表 ----------
+-- 回答五个问题：谁（user_id + username 冗余）、何时（created_at）、做了什么（operation）、
+-- 对什么做的（target_type + target_id）、来自哪（ip + user_agent）。
+-- username 冗余存的理由：用户改名或被删除后，审计记录仍要能说清"当时是谁"。
+-- 设计红线：detail 只记"看过/改过什么"，**绝不写入身份证、手机号等敏感明文**——
+-- 否则审计表自己变成一张明文敏感数据表（见 docs/audit-design.md）。
+CREATE TABLE sys_audit_log (
+  id          BIGINT       PRIMARY KEY AUTO_INCREMENT,
+  user_id     BIGINT       DEFAULT NULL COMMENT '操作者用户id（取不到时为 NULL，如后台任务/未登录）',
+  username    VARCHAR(50)  DEFAULT NULL COMMENT '操作者用户名（冗余存储，改名/删除后仍可追溯）',
+  operation   VARCHAR(100) NOT NULL COMMENT '操作类型，如 查看员工敏感信息',
+  target_type VARCHAR(50)  DEFAULT NULL COMMENT '操作对象类型：EMPLOYEE/DEPT/USER/CRYPTO/KEY',
+  target_id   VARCHAR(64)  DEFAULT NULL COMMENT '操作对象id（字符串，兼容非数字主键）',
+  detail      VARCHAR(500) DEFAULT NULL COMMENT '补充说明（禁止写入敏感明文）',
+  result      VARCHAR(16)  NOT NULL DEFAULT 'SUCCESS' COMMENT 'SUCCESS/FAILURE：失败也要记，越权尝试同样有审计价值',
+  ip          VARCHAR(64)  DEFAULT NULL COMMENT '客户端 IP（优先取 X-Forwarded-For 首个地址）',
+  user_agent  VARCHAR(255) DEFAULT NULL COMMENT '客户端 User-Agent',
+  created_at  DATETIME     NOT NULL COMMENT '事件发生时间（异步落库，记事件时间而非插入时间）',
+  KEY idx_audit_created_at (created_at),
+  KEY idx_audit_user_id (user_id),
+  KEY idx_audit_operation (operation)
+) COMMENT '审计日志表：敏感数据访问与权限变更的追责依据';
+
+-- ---------- 第 7 周：DEK（数据加密密钥）表，KEK/DEK 两级密钥的落点 ----------
+-- 为什么 DEK 要落库、KEK 不落库（面试必答）：
+--   KEK（密钥加密密钥，来自环境变量/KMS）永远不落库，只用于"解开 DEK"；
+--   DEK 才是真正加密业务字段的密钥，它以**密文形式**存在这张表里。
+--   好处：换 DEK 只需重加密业务数据，KEK 不受影响；KEK 泄露面也最小。
+-- 本表刻意**不预置种子行**：encrypted_dek 是用当前环境的 KEK 加出来的，
+-- 写死在 init.sql 里等于把密钥材料提交进 git（红线），且换个 KEK 就再也解不开。
+-- 首次启动由 KekDekKeyProvider 引导生成 k1（见 docs/key-management.md）。
+CREATE TABLE sys_data_key (
+  id            BIGINT       PRIMARY KEY AUTO_INCREMENT,
+  key_id        VARCHAR(32)  NOT NULL COMMENT 'DEK 版本号，写入密文 v1:{keyId}:{iv}:{ct}',
+  encrypted_dek VARCHAR(512) NOT NULL COMMENT 'DEK 密文（用 KEK 做 AES-256-GCM 信封加密），绝不存明文密钥',
+  status        VARCHAR(16)  NOT NULL COMMENT 'ACTIVE=当前加密密钥 / RETIRED=已退役仍可解密 / DISABLED=停用且拒绝解密',
+  created_at    DATETIME     NOT NULL COMMENT '该 DEK 上线时间',
+  retired_at    DATETIME     DEFAULT NULL COMMENT '退役时间（可回答"哪个 keyId 什么时候上线/退役"）',
+  UNIQUE KEY uk_data_key_id (key_id),
+  KEY idx_data_key_status (status)
+) COMMENT '数据加密密钥表：DEK 仅以 KEK 加密后的密文形式落库';

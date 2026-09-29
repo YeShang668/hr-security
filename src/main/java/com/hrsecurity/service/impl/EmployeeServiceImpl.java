@@ -2,6 +2,8 @@ package com.hrsecurity.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hrsecurity.audit.AuditLog;
+import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
 import com.hrsecurity.common.PageResult;
 import com.hrsecurity.common.ResultCode;
@@ -20,6 +22,7 @@ import com.hrsecurity.service.EmployeeService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +35,9 @@ import java.util.stream.Collectors;
  * 1. **写入加密**：DTO 明文 → 实体 → TypeHandler 加密落库，Service 不感知密文；
  * 2. **读出脱敏**：出参 VO 一律先脱敏，只有 getSensitive（独立权限、独立接口）给明文。
  * 脱敏判定集中在这个类的 toVO，不散落在各 Controller——避免哪天新加接口忘了脱敏。
+ *
+ * 第 7 周补第三条线：**审计**。明文出口 getSensitive 与增删改都打了 @AuditLog，
+ * 其中"查看明文"和"敏感字段被修改"最要紧；审计只记"看过/改过哪些字段"，不记字段值。
  */
 @Service
 public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysEmployee> implements EmployeeService {
@@ -78,11 +84,23 @@ public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysE
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
+    /**
+     * 明文出口（本周审计最重要的一条埋点）。
+     *
+     * 权限由 Controller 的 @PreAuthorize 把关（employee:sensitive:read），
+     * 这个方法的职责就是"明文的唯一出口"；第 7 周在这里挂审计后，
+     * "谁在什么时候看了谁的身份证/手机号/银行卡/工资"就有了记录。
+     *
+     * 审计只记"看过什么字段、看的是谁"，**绝不记字段值本身**——
+     * 否则审计表会变成一张新的明文敏感数据表（见 docs/audit-design.md）。
+     */
+    @AuditLog(operation = "查看员工敏感信息", targetType = "EMPLOYEE", targetIdArgIndex = 0,
+            detail = "明文唯一出口：身份证/手机号/银行卡/工资")
     @Override
     public EmployeeSensitiveVO getSensitive(Long id) {
-        // 权限由 Controller 的 @PreAuthorize 把关（employee:sensitive:read），
-        // 这个方法的职责就是"明文的唯一出口"（第 7 周会在这里挂审计埋点）
         SysEmployee e = getOrThrow(id, "员工不存在");
+        // 运行时补充：定位到具体是谁（工号 + 姓名），但不含任何敏感字段值
+        AuditTrace.append("员工 " + e.getEmpNo() + "（" + e.getName() + "）");
         return EmployeeSensitiveVO.builder()
                 .id(e.getId())
                 .empNo(e.getEmpNo())
@@ -109,6 +127,8 @@ public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysE
                 .collect(Collectors.toList());
     }
 
+    @AuditLog(operation = "新增员工", targetType = "EMPLOYEE",
+            detail = "含敏感字段的新增会直接写入密文列（目标是新建记录的 id，从返回值取）")
     @Override
     public EmployeeVO create(EmployeeDTO dto) {
         checkEmpNoUnique(dto.getEmpNo(), null);
@@ -125,9 +145,16 @@ public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysE
         // 敏感字段：明文进实体，落库由 AesTypeHandler 加密；身份证同时维护检索哈希
         applySensitive(employee, dto, null);
         baseMapper.insert(employee);
+        AuditTrace.append("工号 " + employee.getEmpNo() + "；敏感字段：" + sensitiveHint(dto));
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
+    /**
+     * 修改员工。审计单独强调"敏感字段有没有被改"——
+     * 姓名/部门改动是普通管理动作，而身份证/银行卡/工资被改是需要单独回答"谁改的"的动作。
+     */
+    @AuditLog(operation = "修改员工", targetType = "EMPLOYEE", targetIdArgIndex = 0,
+            detail = "敏感字段留空=不修改")
     @Override
     public EmployeeVO update(Long id, EmployeeDTO dto) {
         SysEmployee employee = getOrThrow(id, "员工不存在");
@@ -145,15 +172,36 @@ public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysE
         // 敏感字段留空 = 不修改（防"脱敏值被回填提交"把真实数据覆盖成 138****0001）
         applySensitive(employee, dto, id);
         baseMapper.updateById(employee);
+        AuditTrace.append("工号 " + employee.getEmpNo() + "；敏感字段：" + sensitiveHint(dto));
         return toVO(employee, deptName(employee.getDeptId()));
     }
 
+    @AuditLog(operation = "删除员工（离职）", targetType = "EMPLOYEE", targetIdArgIndex = 0,
+            detail = "逻辑删除 = 置为离职，密文数据保留")
     @Override
     public void delete(Long id) {
         // @TableLogic 生效：deleteById 实际执行 UPDATE status=0（离职）
         if (baseMapper.deleteById(id) == 0) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "员工不存在");
         }
+    }
+
+    /** 本次请求里涉及的敏感字段名（只写字段名，不写值，避免审计表变成明文库） */
+    private String sensitiveHint(EmployeeDTO dto) {
+        List<String> fields = new ArrayList<>();
+        if (StringUtils.hasText(dto.getIdCard())) {
+            fields.add("身份证");
+        }
+        if (StringUtils.hasText(dto.getPhone())) {
+            fields.add("手机号");
+        }
+        if (StringUtils.hasText(dto.getBankCard())) {
+            fields.add("银行卡");
+        }
+        if (dto.getSalary() != null) {
+            fields.add("工资");
+        }
+        return fields.isEmpty() ? "未提交（留空=不修改）" : String.join("/", fields);
     }
 
     /**

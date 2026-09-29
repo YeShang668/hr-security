@@ -8,7 +8,7 @@
 #   放到 CI 里跑：既拿到真实容器环境的回归证据，也不需要动本机 BIOS / Windows 功能 / 重启。
 #
 # 跑什么：test-payloads/docker-e2e-test.sh（自动 docker compose up -d --build →
-#         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 96 用例：20+11+25+40）
+#         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 176 用例：20+11+25+40+50+30）
 # 触发：手动（workflow_dispatch）或 push 改动到相关路径
 # 失败排查：可手动执行末尾的 docker compose logs app
 # ============================================
@@ -42,7 +42,7 @@ jobs:
           python3 --version
           bash --version | head -1
 
-      - name: 容器一键部署 + 全量回归（96 用例）
+      - name: 容器一键部署 + 全量回归（176 用例）
         env:
           PYTHON: python3
         run: |
@@ -53,7 +53,7 @@ jobs:
             echo '## 容器环境全量回归结果'
             echo ''
             echo '```'
-            grep -E '结果：PASS|Docker 环境回归结果' /tmp/docker-e2e.log || true
+            grep -aE '结果：PASS|Docker 环境回归结果' /tmp/docker-e2e.log || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

@@ -16,6 +16,8 @@ application-local.yml
 *.log
 .DS_Store
 Thumbs.db
+# 本地手动启动 redis-server 时落在工作目录的持久化文件（数据卷在容器里，不入库）
+dump.rdb
 
 # 端到端回归脚本纳入版本管理（第 5 周起，便于他人复现），
 # 但登录 token（*_login.json，含真实 JWT）与日志绝不提交

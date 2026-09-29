@@ -21,13 +21,18 @@ npm run dev        # http://localhost:5173
 |---|---|---|---|
 | `/login` | 登录 | 匿名 | 登录成功存 token + 用户信息，带 `redirect` 回跳 |
 | `/dashboard` | 首页 | 登录用户 | 当前身份/角色/菜单 + 演示剧本 + 安全设计要点 |
-| `/employees` | 员工管理 | ADMIN 增删改，EMPLOYEE 只读 | 分页 + 关键字 + 部门筛选；删除 = 逻辑删除（离职） |
+| `/employees` | 员工管理 | ADMIN 增删改，EMPLOYEE 只读 | 分页 + 关键字 + 部门筛选；删除 = 逻辑删除（离职）；敏感列脱敏 + 「查看完整信息」明文弹窗 |
 | `/depts` | 部门管理 | 同上 | 部门下有员工时删除返回 409 |
 | `/users` | 用户管理 | 仅 ADMIN | 账号启用/禁用（禁用即踢下线）、角色分配（即时生效） |
+| `/audit-logs` | 审计日志（第 7 周） | 仅 ADMIN | 分页 + 按操作者/操作类型/结果/对象类型过滤；明细只显示"看过/改过哪些字段"，不含明文 |
+| `/keys` | 密钥管理（第 7 周） | 仅 ADMIN | 密钥状态表（keyId/状态/指纹/时间，**无任何密钥材料**）+ 轮换 / 执行重加密 / 停用（有残留会拒绝） |
 
 ## 工程约定
 
 - 请求统一走 `src/api/request.js`：请求拦截自动带 `Authorization: Bearer <token>`；响应拦截拆 `Result{code,message,data}`，`code != 200` 统一弹提示，HTTP 401 清登录态并回登录页。
 - 登录态在 `src/stores/user.js`（Pinia + localStorage）；刷新页面由路由守卫调 `/api/auth/me` 恢复，顺带校验 token 是否已被服务端踢掉。
 - 路由表即菜单表：`meta.title/icon` 渲染侧边栏，`meta.roles` 控制可访问角色。**前端只做显示控制，真正鉴权在后端 `@PreAuthorize`**。
-- 详细设计说明与演示剧本见 [`../docs/frontend-guide.md`](../docs/frontend-guide.md)，已修 Bug 见 [`../docs/week5-bugfix-log.md`](../docs/week5-bugfix-log.md)。
+- 详细设计说明与演示剧本见 [`../docs/frontend-guide.md`](../docs/frontend-guide.md)，已修 Bug 见
+  [`../docs/week5-bugfix-log.md`](../docs/week5-bugfix-log.md) 与 [`../docs/week7-bugfix-log.md`](../docs/week7-bugfix-log.md)
+  （第 7 周：BUG7-5 提示文案 Markdown 星号裸露、BUG7-6 表格列宽超出容器致时间列裁切——两处都是浏览器实测截图发现的）。
+- 第 7 周后端设计与接口见 [`../docs/audit-design.md`](../docs/audit-design.md)（审计）、[`../docs/key-management.md`](../docs/key-management.md)（密钥轮换）。
