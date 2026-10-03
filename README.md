@@ -8,7 +8,7 @@
 > ✅ 第 5 周（09-12）Vue3 + Element Plus 前端（`hr-ui/`）+ 用户管理接口 + 禁用踢下线（回归 56/56）
 > ✅ 第 6 周（09-20）敏感字段 AES-256-GCM 加密 + 动态脱敏 + HMAC 可检索 + 幂等刷数（回归 96/96）
 > ✅ 第 7 周（09-29）审计日志 AOP（异步落库）+ KEK/DEK 两级密钥 + 密钥轮换（回归 176/176）
-> ✅ 第 8 周（10-03）**安全加固（越权矩阵/注入/XSS/登录防护）+ HTTPS 部署 + 前端 Docker 化 + 压测**（本地回归 228/228）
+> ✅ 第 8 周（10-03）**安全加固（越权矩阵/注入/XSS/登录防护）+ HTTPS 部署 + 前端 Docker 化 + 压测**（本地 228/228；容器 240/240，Actions run 9）
 >
 > 主文档（周计划/交付）见上级目录《周末项目工作前准备-*》系列；本周交付物见 `docs/`：
 > - [安全加固与对抗性测试](docs/security-hardening.md)（**第 8 周**：越权矩阵表/4 处加固/已知不覆盖项）
@@ -139,12 +139,15 @@ docker compose down -v                # 彻底重置（删数据卷，下次 up 
 | 压测（第 8 周） | `MYSQL_CMD="mysql ... -e" python test-payloads/pressure-test.py --scenario all --concurrency 8 --requests 300 --check-audit` | 登录/脱敏列表/明文读取三类接口的 QPS 与分位延迟 + **并发下审计不丢**校验（结果见 [docs/pressure-test.md](docs/pressure-test.md)） |
 | 容器回归（免本机虚拟化） | GitHub Actions → workflow `docker-regression`（push 自动触发或手动 Run） | 同上；本机 Docker 不可用时的替代路径。**CI 失败时日志会自动推到 `ci-logs` 分支**（`git fetch origin ci-logs` 读失败现场，无需 GitHub 登录） |
 
-**当前结果（2026-10-03）：本地 228/228 通过（20 + 11 + 25 + 40 + 50 + 52 + 30）；容器环境 240/240（GitHub Actions，含 12 条 HTTPS 专项）。**
+**当前结果（2026-10-03）：本地 228/228 通过（20 + 11 + 25 + 40 + 50 + 52 + 30）；容器环境 240/240 通过（GitHub Actions run 9 实测，含 12 条 HTTPS 专项）。**
 
 - 本地实测：jar + 本机 MySQL/Redis，测试前重灌 `sql/init.sql` 并**重启应用**（让 DEK 引导重新执行）；
-- **容器实测：`docker-e2e-test.sh` 已在 GitHub Actions（ubuntu runner，原生 Docker + Compose v2）跑通**，
-  脚本内部有硬断言（`TOTAL_PASS != 240 || TOTAL_FAIL > 0 || 用例数不符` 即 exit 1），
+- **容器实测：`docker-e2e-test.sh` 已在 GitHub Actions（ubuntu runner，原生 Docker + Compose v2）跑通 run 9**
+  （提交 `78dd541`，run id 37123256689），脚本内部有硬断言（`TOTAL_PASS != 240 || TOTAL_FAIL > 0 || 用例数不符` 即 exit 1），
   且**逐脚本校验用例数**（20/11/25/40/50/52/12/30）——因此 CI 成功 = 容器环境 240/240，且没有用例被静默跳过。
+  **这一轮同时验证了只可能在容器里暴露的部分**：`web` 容器镜像（`node:24-alpine` 构建 + `nginx:alpine` 托管）、
+  Nginx 配置语法与 TLS 生效（仅 1.2/1.3）、80→443 跳转与 HSTS/CSP、SPA 路由回退、
+  `/api` 同源反代可用、**伪造 `X-Forwarded-For` 被入口层重置**（https 专项 12 条用例）。
   过程说明：第 7 周的容器回归前几轮未绿，原因是**测试侧与 CI 侧**三处问题（功能本身没问题）：
   ①审计用例断言"直连 ip=回环地址"，容器里请求经 docker-proxy、对端是 Docker 网关地址（正确行为）；
   ②审计脚本漏定义辅助函数导致该用例"既没 PASS 也没 FAIL"、总数悄悄少 1；
