@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hrsecurity.audit.AuditLog;
 import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
+import com.hrsecurity.common.LikeUtils;
 import com.hrsecurity.common.PageResult;
 import com.hrsecurity.common.ResultCode;
 import com.hrsecurity.dto.UserVO;
@@ -58,9 +59,11 @@ public class UserServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
     public PageResult<UserVO> page(long pageNum, long pageSize, String keyword, Integer status) {
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(keyword)) {
-            wrapper.and(w -> w.like(SysUser::getUsername, keyword)
+            // 同 EmployeeServiceImpl：keyword 里的 % _ 是 LIKE 通配符，参数化拦不住，必须转义
+            String safeKeyword = LikeUtils.escape(keyword);
+            wrapper.and(w -> w.like(SysUser::getUsername, safeKeyword)
                     .or()
-                    .like(SysUser::getNickname, keyword));
+                    .like(SysUser::getNickname, safeKeyword));
         }
         if (status != null) {
             wrapper.eq(SysUser::getStatus, status);

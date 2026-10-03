@@ -1,5 +1,14 @@
 server:
   port: 8080
+  # 第 8 周（HTTPS 部署）：应用跑在 Nginx 反代后面时，容器里看到的协议永远是 http、
+  # 对端地址也是网关地址。native = 交给 Servlet 容器（Tomcat RemoteIpValve）依据
+  # X-Forwarded-Proto / X-Forwarded-For 还原真实协议与客户端地址，于是：
+  #   ① request.isSecure() 变 true → HSTS 响应头才会被写入（见 SecurityConfig）；
+  #   ② 后续要用 request.getScheme() 生成链接时不会生成 http 链接。
+  # 为什么用 native 而不是 framework：framework（ForwardedHeaderFilter）会把 X-Forwarded-*
+  # 头**从请求里摘掉**避免重复处理，而本项目的 IpUtils 需要直接读该头解析代理链；
+  # native 只改写 remoteAddr/scheme，不动请求头，两者可以共存（测试 S4/A8 覆盖）。
+  forward-headers-strategy: native
 
 spring:
   application:
@@ -31,6 +40,15 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     banner: false
+
+# 第 8 周：登录失败限流（防爆破/撞库），计数存 Redis（多实例共享 + 重启不清零）。
+# 阈值差异是刻意的：账号维度更严（保护单个账号），IP 维度更宽
+# （避免"故意输错把别人账号锁死"的拒绝服务反噬，理由见 LoginAttemptService 类注释）。
+security:
+  login:
+    max-attempts-per-user: 5
+    max-attempts-per-ip: 20
+    lock-minutes: 10
 
 jwt:
   # token 有效期（小时），Redis 会话 TTL 与其同步（见 JwtUtil）

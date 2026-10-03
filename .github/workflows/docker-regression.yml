@@ -7,9 +7,15 @@
 #   GitHub 的 ubuntu runner 原生带 Docker + Compose v2，因此把"容器一键部署 + 全量回归"
 #   放到 CI 里跑：既拿到真实容器环境的回归证据，也不需要动本机 BIOS / Windows 功能 / 重启。
 #
-# 跑什么：test-payloads/docker-e2e-test.sh（自动 docker compose up -d --build →
-#         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 176 用例：20+11+25+40+50+30）
+# 跑什么：test-payloads/docker-e2e-test.sh（自动 gen-cert → compose up -d --build →
+#         等应用就绪 → 注册 zhangsan → 刷新 token → 跑满 240 用例：20+11+25+40+50+52+12+30）
 # 触发：手动（workflow_dispatch）或 push 改动到相关路径
+#
+# 第 8 周的两点变化：
+#   ① 多带一个 docker-compose.test.yml（test override）：默认形态下 app 不对宿主发布端口
+#      （唯一入口是 web 的 80/443），而回归脚本要直连端口跑 200+ 用例；
+#      override 只给测试用，理由与取舍见该文件注释。
+#   ② 先跑 gen-cert.sh 生成自签证书：web 容器以只读卷挂载它，证书不在镜像里（私钥不进镜像层）。
 #
 # 步骤刻意拆成"构建 / 启动+等就绪 / 回归"三段（第 7 周踩坑后调整）：
 #   合成一段时，"镜像构建失败"和"测试有失败用例"都只表现为"某一步 exit 1"，
@@ -27,45 +33,59 @@ on:
       - 'sql/**'
       - 'docker-build/**'
       - 'docker-compose.yml'
+      - 'docker-compose.test.yml'
       - 'Dockerfile'
       - 'pom.xml'
       - 'test-payloads/**'
+      - 'hr-ui/**'
       - '.github/workflows/docker-regression.yml'
 
 jobs:
   docker-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     # 失败时把日志推到 ci-logs 分支需要写权限
     permissions:
       contents: write
+    env:
+      # 基础形态 + 测试专用覆盖（见 docker-compose.test.yml）。job 级定义，保证各步骤一致
+      COMPOSE: docker compose -f docker-compose.yml -f docker-compose.test.yml
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 环境自检（docker / compose / python）
+      - name: 环境自检（docker / compose / python / openssl）
         run: |
           docker version
           docker compose version
           python3 --version
+          openssl version
           bash --version | head -1
+
+      - name: 生成自签证书（web 容器要挂载它）
+        run: |
+          # 证书不入库、不进镜像，每次跑前现生成（幂等，已存在则跳过）
+          bash docker-build/nginx/gen-cert.sh
+          openssl x509 -in docker-build/nginx/certs/server.crt -noout -subject -ext subjectAltName
 
       - name: 构建镜像（构建日志单独可见）
         run: |
           # 先拉基础镜像（mysql/redis）——它们只在 up 阶段用到，一旦拉取失败整个 up 就中断，
           # 而 bash -e 会把现场一起吞掉（第 7 周 run 7 就是这样：零容器、日志全空、无从判断）。
           # 这里显式拉取并把失败提前暴露；用服务名而不是 --ignore-buildable（后者的 flag 依赖 compose 版本）。
-          docker compose pull mysql redis || { echo '!! 基础镜像拉取失败（多为 Docker Hub 瞬时问题，可重试）'; exit 1; }
-          docker compose build
+          $COMPOSE pull mysql redis || { echo '!! 基础镜像拉取失败（多为 Docker Hub 瞬时问题，可重试）'; exit 1; }
+          # app（后端 jar）与 web（前端静态资源 + Nginx）两个镜像都在这里构建：
+          # 前端要 npm ci + vite build，比后端慢，单独成段后失败点一眼可辨
+          $COMPOSE build
 
       - name: 启动容器并等待应用就绪
         run: |
           # 关键：up 的输出必须落盘 + 失败立刻打印现场，不能让 -e 静默中断（否则日志全空、无从判断）
-          if ! docker compose up -d > /tmp/compose-up.log 2>&1; then
+          if ! $COMPOSE up -d > /tmp/compose-up.log 2>&1; then
             echo '!! docker compose up -d 失败，输出如下：'
             cat /tmp/compose-up.log
-            echo '== compose ps -a =='; docker compose ps -a || true
+            echo '== compose ps -a =='; $COMPOSE ps -a || true
             exit 1
           fi
           cat /tmp/compose-up.log
@@ -77,9 +97,17 @@ jobs:
             if [ "$CODE" = "200" ]; then echo "应用已就绪（第 ${i} 次探测）"; exit 0; fi
             sleep 2
           done
-          echo "应用 180s 内未就绪"; docker compose ps; docker compose logs --tail=200 app; exit 1
+          echo "应用 180s 内未就绪"; $COMPOSE ps; $COMPOSE logs --tail=200 app; exit 1
 
-      - name: 全量回归（176 用例）
+      - name: HTTPS 入口冒烟（先快速确认 web/入口没起错）
+        run: |
+          # 这几条与 https-e2e-test.sh 的用例重叠，放在这里是为了"入口没起来"能在独立步骤里一眼看到，
+          # 不必等 200+ 条用例跑完才从后面翻出来
+          curl -s -o /dev/null -w 'http://localhost -> %{http_code}\n' http://localhost/
+          curl -sk -o /dev/null -w 'https://localhost -> %{http_code}\n' https://localhost/
+          curl -sk -D - -o /dev/null https://localhost/ | grep -iE 'strict-transport-security|content-security-policy' || true
+
+      - name: 全量回归（240 用例）
         id: regression
         env:
           PYTHON: python3
@@ -103,10 +131,10 @@ jobs:
               echo '```'
               grep -a '^FAIL' /tmp/docker-e2e.log || echo '(没有 FAIL 行：可能是脚本提前异常退出，见下方日志尾部)'
               echo '```'
-              echo '## 日志尾部 100 行'
+              echo '## 日志尾部 150 行'
               echo ''
               echo '```'
-              tail -100 /tmp/docker-e2e.log || true
+              tail -150 /tmp/docker-e2e.log || true
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -115,10 +143,11 @@ jobs:
       - name: 失败时导出容器与数据库日志
         if: failure()
         run: |
-          docker compose ps -a || true
-          docker compose logs --tail=200 app || true
-          docker compose logs --tail=100 mysql || true
-          docker compose logs --tail=50 redis || true
+          $COMPOSE ps -a || true
+          $COMPOSE logs --tail=200 app || true
+          $COMPOSE logs --tail=100 mysql || true
+          $COMPOSE logs --tail=50 redis || true
+          $COMPOSE logs --tail=100 web || true
 
       - name: 失败时把日志回传到 ci-logs 分支（无 GitHub 登录也能读）
         if: failure()
@@ -132,11 +161,13 @@ jobs:
           set +e
           mkdir -p /tmp/ci-logs
           cp /tmp/docker-e2e.log /tmp/ci-logs/docker-e2e.log 2>/dev/null || echo "(本次没有 docker-e2e.log：说明失败发生在回归之前)" > /tmp/ci-logs/docker-e2e.log
-          cp /tmp/compose-up.log /tmp/ci-logs/compose-up.log 2>/dev/null || echo "(本次没有 compose-up.log)" > /tmp/ci-logs/compose-up.log
-          docker compose ps -a > /tmp/ci-logs/compose-ps.txt 2>&1
-          docker compose logs --tail=400 app > /tmp/ci-logs/app.log 2>&1
-          docker compose logs --tail=200 mysql > /tmp/ci-logs/mysql.log 2>&1
-          docker compose logs --tail=100 redis > /tmp/ci-logs/redis.log 2>&1
+          cp /tmp/compose-up.log /tmp/ci-logs/compose-up.log 2>/dev/null || echo "(本次没有 compose-up.log，失败可能发生在构建阶段)" > /tmp/ci-logs/compose-up.log
+          $COMPOSE ps -a > /tmp/ci-logs/compose-ps.txt 2>&1
+          $COMPOSE logs --tail=400 app > /tmp/ci-logs/app.log 2>&1
+          $COMPOSE logs --tail=200 mysql > /tmp/ci-logs/mysql.log 2>&1
+          $COMPOSE logs --tail=100 redis > /tmp/ci-logs/redis.log 2>&1
+          # web（Nginx）日志：TLS/反代/静态托管的问题只在这里看得到
+          $COMPOSE logs --tail=200 web > /tmp/ci-logs/web.log 2>&1
           docker images > /tmp/ci-logs/images.txt 2>&1
           df -h / /var/lib/docker > /tmp/ci-logs/disk.txt 2>&1
           cd /tmp/ci-logs
@@ -147,7 +178,7 @@ jobs:
           {
             echo "run_id: ${{ github.run_id }}"
             echo "sha: ${{ github.sha }}"
-            echo "failed_step: ${{ steps.regression.outcome == 'failure' && '全量回归' || '构建/启动/就绪阶段' }}"
+            echo "failed_step: ${{ steps.regression.outcome == 'failure' && '全量回归' || '构建/启动/就绪/HTTPS冒烟阶段' }}"
             echo "run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } > meta.txt
           git add -A
@@ -162,6 +193,11 @@ jobs:
             echo '## 容器状态'
             echo ''
             echo '```'
-            docker compose ps
+            $COMPOSE ps
+            echo '```'
+            echo '## HTTPS 入口'
+            echo ''
+            echo '```'
+            curl -sk -D - -o /dev/null https://localhost/ | head -20
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

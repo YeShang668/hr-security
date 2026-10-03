@@ -1,0 +1,23 @@
+# ============================================
+# 回归测试专用覆盖文件（第 8 周）——**不是部署形态**
+#
+# 用法（只给测试用）：
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+#
+# 为什么需要它（讲清楚，别当成随手加的便利）：
+#   docker-compose.yml 是"对外部署形态"：app **不对宿主发布端口**，
+#   唯一入口是 web（80/443），这样暴露面最小。
+#   但回归脚本有 200+ 条用例要直接访问接口，而 https 入口用的是**自签证书**：
+#     - Linux（CI runner）：把自签证书装进系统信任库（update-ca-certificates）后可正常校验；
+#     - Windows（Git Bash 的 curl 是 Schannel 后端）：**不读 CURL_CA_BUNDLE / --cacert**，
+#       只认 Windows 证书库，除非把开发证书导入本机信任库（certutil -addstore -user Root），
+#       否则只能加 -k 跳过校验 —— 而 -k 会让这 200+ 条用例全部失去"证书是否可信"的校验能力。
+#   所以本文件把 8080 临时映射出来给回归脚本走 http，把"TLS 入口形态"交给
+#   https-e2e-test.sh 单独一套用例（它只测入口/跳转/HSTS/TLS 版本/代理语义这些新面）。
+#
+# 不要用它部署：它把后端端口重新暴露到了宿主机。
+# ============================================
+services:
+  app:
+    ports:
+      - "8080:8080"

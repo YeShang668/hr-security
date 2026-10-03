@@ -1,6 +1,8 @@
 package com.hrsecurity.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.hrsecurity.audit.AuditLog;
+import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
 import com.hrsecurity.common.ResultCode;
 import com.hrsecurity.dto.LoginDTO;
@@ -15,6 +17,7 @@ import com.hrsecurity.mapper.SysRoleMapper;
 import com.hrsecurity.mapper.SysUserMapper;
 import com.hrsecurity.mapper.SysUserRoleMapper;
 import com.hrsecurity.security.JwtUtil;
+import com.hrsecurity.security.LoginAttemptService;
 import com.hrsecurity.service.AuthService;
 import com.hrsecurity.service.RoleService;
 import com.hrsecurity.service.SessionService;
@@ -36,10 +39,12 @@ public class AuthServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
     private final JwtUtil jwtUtil;
     private final SessionService sessionService;
     private final RoleService roleService;
+    private final LoginAttemptService loginAttemptService;
 
     public AuthServiceImpl(SysUserMapper userMapper, SysRoleMapper roleMapper,
                            SysUserRoleMapper userRoleMapper, PasswordEncoder passwordEncoder,
-                           JwtUtil jwtUtil, SessionService sessionService, RoleService roleService) {
+                           JwtUtil jwtUtil, SessionService sessionService, RoleService roleService,
+                           LoginAttemptService loginAttemptService) {
         super(userMapper);
         this.roleMapper = roleMapper;
         this.userRoleMapper = userRoleMapper;
@@ -47,6 +52,7 @@ public class AuthServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
         this.jwtUtil = jwtUtil;
         this.sessionService = sessionService;
         this.roleService = roleService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Override
@@ -79,19 +85,40 @@ public class AuthServiceImpl extends BaseServiceImpl<SysUserMapper, SysUser> imp
         userRoleMapper.insert(userRole);
     }
 
+    /**
+     * 登录。
+     *
+     * 第 8 周加固三点（都在这个方法里，顺序不能换）：
+     * 1. **先查锁定**再校验密码：锁定期间的"正确密码"同样拒绝，否则锁定形同虚设；
+     * 2. 凭证错误时**立刻计数**：账号维度 5 次 / IP 维度 20 次（阈值差异的理由见 LoginAttemptService）；
+     * 3. **登录本身进审计**（@AuditLog + AuditTrace）：成功与失败都留痕，
+     *    失败记录只写"尝试了哪个账号**，绝不写口令**（否则审计表变成口令字典）。
+     */
+    @AuditLog(operation = "用户登录", targetType = "USER", detail = "登录留痕：成功/失败均记录，不记口令")
     @Override
     public LoginResponse login(LoginDTO dto) {
+        // 0. 限流前置检查：已锁定则直接 429，不进入下面的密码比对
+        loginAttemptService.assertNotLocked(dto.getUsername());
+
         // 1. 按用户名查用户
         SysUser user = baseMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, dto.getUsername()));
         // 2. 用户不存在和密码错误返回同一提示，避免暴露"用户名是否注册"
         if (user == null || !passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
+            AuditTrace.append("尝试登录账号：" + dto.getUsername());
+            loginAttemptService.onFailure(dto.getUsername());
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "用户名或密码错误");
         }
         // 3. 账号状态检查
         if (user.getStatus() != null && user.getStatus() == 0) {
+            AuditTrace.append("账号已禁用：" + dto.getUsername());
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "账号已被禁用，请联系管理员");
         }
+
+        // 3.5 凭证正确才清账号失败计数：避免"正常用户白天错 4 次、晚上再错 1 次就被锁"
+        //     （IP 计数不清，撞库行为仍然会累积到 IP 维度上）
+        loginAttemptService.onSuccess(dto.getUsername());
+        AuditTrace.append("登录成功：" + dto.getUsername());
 
         // 4. 角色：先删缓存再取（未命中查库回填），保证登录拿到的角色是最新的
         roleService.evict(user.getId());

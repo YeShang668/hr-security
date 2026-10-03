@@ -12,8 +12,25 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-演示账号：`admin / 123456`（管理员）、`zhangsan / 123456`（普通员工，需先注册）。
+演示账号：`admin / Hr@123456`（管理员）、`zhangsan / Hr@123456`（普通员工，需先注册）。
+> 口令策略（第 8 周）：注册要求 8~32 位且同时含字母与数字；演示账号也一并从 `123456` 升级。
 `/api` 请求由 Vite dev proxy 转发到 `http://localhost:8080`，前后端同源，无需后端开 CORS。
+
+## 容器化（第 8 周）
+
+`Dockerfile` 是多阶段构建（`node:24-alpine` 编译 → `nginx:alpine` 托管），
+构建上下文是**仓库根目录**（要同时拿源码与 `docker-build/nginx/hr.conf`）：
+
+```bash
+cd ..                                              # 回到仓库根
+bash docker-build/nginx/gen-cert.sh                # 生成自签证书（web 容器挂载）
+docker compose up -d --build web                   # 或整体 up -d --build
+# 访问 https://localhost（80 会 301 过来；证书自签，浏览器点"继续"）
+```
+
+生产形态下 `web` 是**唯一对外入口**（80/443）：Nginx 终止 TLS、托管 `dist/`、
+把 `/api` 同源反代到 `app:8080`（后端不对宿主发布端口）。CSP/HSTS/`X-Forwarded-For` 重置等
+配置与取舍见 [`../docs/deployment-https.md`](../docs/deployment-https.md)。
 
 ## 页面与权限
 
@@ -36,3 +53,7 @@ npm run dev        # http://localhost:5173
   [`../docs/week5-bugfix-log.md`](../docs/week5-bugfix-log.md) 与 [`../docs/week7-bugfix-log.md`](../docs/week7-bugfix-log.md)
   （第 7 周：BUG7-5 提示文案 Markdown 星号裸露、BUG7-6 表格列宽超出容器致时间列裁切——两处都是浏览器实测截图发现的）。
 - 第 7 周后端设计与接口见 [`../docs/audit-design.md`](../docs/audit-design.md)（审计）、[`../docs/key-management.md`](../docs/key-management.md)（密钥轮换）。
+- 第 8 周：[`../docs/security-hardening.md`](../docs/security-hardening.md)（越权矩阵/加固/CSP 的两套策略）、
+  [`../docs/deployment-https.md`](../docs/deployment-https.md)（HTTPS 入口与前端容器化）、
+  [`../docs/week8-bugfix-log.md`](../docs/week8-bugfix-log.md)。
+  前端本轮的唯一硬约束是**不要用 `v-html`**——渲染转义依赖 Vue 插值，`security-e2e-test.sh` 的 X6 用静态断言钉住这条。

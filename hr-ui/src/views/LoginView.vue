@@ -30,8 +30,8 @@
       <el-alert type="info" :closable="false" class="login-tip">
         <template #title>
           <div class="tip-line">演示账号（开发环境种子数据）</div>
-          <div class="tip-line">管理员：admin / 123456 —— 可见全部菜单</div>
-          <div class="tip-line">普通员工：zhangsan / 123456 —— 无用户管理菜单，员工/部门只读</div>
+          <div class="tip-line">管理员：admin / Hr@123456 —— 可见全部菜单</div>
+          <div class="tip-line">普通员工：zhangsan / Hr@123456 —— 无用户管理菜单，员工/部门只读</div>
         </template>
       </el-alert>
 

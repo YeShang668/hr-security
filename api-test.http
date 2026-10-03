@@ -12,7 +12,7 @@ Content-Type: application/json
 
 {
   "username": "zhangsan",
-  "password": "123456",
+  "password": "Hr@123456",
   "nickname": "张三"
 }
 
@@ -22,7 +22,7 @@ Content-Type: application/json
 
 {
   "username": "admin",
-  "password": "123456"
+  "password": "Hr@123456"
 }
 
 > {%
@@ -35,7 +35,7 @@ Content-Type: application/json
 
 {
   "username": "zhangsan",
-  "password": "123456"
+  "password": "Hr@123456"
 }
 
 > {%
@@ -163,7 +163,7 @@ Content-Type: application/json
 
 {
   "username": "admin",
-  "password": "123456"
+  "password": "Hr@123456"
 }
 
 > {%
@@ -246,7 +246,7 @@ Content-Type: application/json
 
 {
   "username": "zhangsan",
-  "password": "123456"
+  "password": "Hr@123456"
 }
 
 > {%
@@ -401,3 +401,111 @@ Authorization: Bearer {{adminToken}}
 ### 9.8 权限边界：EMPLOYEE 查密钥 / 轮换 → 403
 POST http://localhost:8080/api/admin/keys/rotate
 Authorization: Bearer {{empToken}}
+
+### ============================================
+### 10. 安全加固（第 8 周）——越权矩阵 / 注入 / XSS / 登录防护 / 安全响应头
+### 对应的自动化用例在 test-payloads/security-e2e-test.sh（52 条），这里给手工验证入口
+### ============================================
+
+### 10.1 安全响应头（看响应头，不看响应体）：
+###   X-Content-Type-Options: nosniff / X-Frame-Options: DENY
+###   Referrer-Policy: no-referrer / Content-Security-Policy: default-src 'none'; ...
+###   HSTS 只在 https 请求上出现（本地可加 -H "X-Forwarded-Proto: https" 观察）
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer {{adminToken}}
+
+### 10.2 垂直越权：EMPLOYEE 访问用户管理 / 审计日志 / 密钥 / 加密迁移 → 全部 403（业务 code）
+GET http://localhost:8080/api/users
+Authorization: Bearer {{empToken}}
+
+### 10.3 纵向对照：同样这些接口，ADMIN 访问是 200
+GET http://localhost:8080/api/users
+Authorization: Bearer {{adminToken}}
+
+### 10.4 水平越权：EMPLOYEE 改他人档案 / 给自己提权 → 403
+PUT http://localhost:8080/api/employees/1
+Authorization: Bearer {{empToken}}
+Content-Type: application/json
+
+{
+  "empNo": "E001",
+  "name": "越权改名",
+  "deptId": 1
+}
+
+### 10.5 注入 1（SQL 结构）：keyword 传经典注入串 → 200 且命中 0 条（参数化 + 转义）
+###   注意 keyword 里的 % 和 _ 是 LIKE 通配符，第 8 周起被转义成字面量：
+###   加固前 keyword=% 会命中全表（数据枚举），现在返回 0 条
+GET http://localhost:8080/api/employees?page=1&size=10&keyword=%25
+Authorization: Bearer {{adminToken}}
+
+### 10.6 注入 2（LIKE 通配符）：keyword=_（单字符通配符）→ 0 条
+GET http://localhost:8080/api/employees?page=1&size=10&keyword=_
+Authorization: Bearer {{adminToken}}
+
+### 10.7 注入 3（登录入口）：用户名传注入串 → 400「用户名或密码错误」，不是 500
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "' OR '1'='1",
+  "password": "x"
+}
+
+### 10.8 弱口令：注册口令 123456 → 400（策略：8~32 位且必须同时含字母与数字）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "weakprobe",
+  "password": "123456",
+  "nickname": "弱口令探针"
+}
+
+### 10.9 合规口令：同一个用户名换成 Hr@123456 → 200
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "weakprobe",
+  "password": "Hr@123456",
+  "nickname": "合规口令探针"
+}
+
+### 10.10 登录爆破防护：连续 5 次错误口令后第 6 次 → 429
+###   账号维度：5 次 / IP 维度：20 次（阈值差异见 docs/security-hardening.md）
+###   手工演示时请用不存在的探针账号，别拿 admin/zhangsan 试（会把自己锁 10 分钟）
+###   解锁：redis-cli del login:fail:user:爆破探针账号
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "bruteforce_probe",
+  "password": "wrongpass1"
+}
+
+### 10.11 XSS（存储型）：姓名写入 <script> 会被原样存储 → 靠**渲染层转义**，不是过滤输入
+###   校验：返回 Content-Type 必须是 application/json（浏览器不会当 HTML 执行）；
+###   前端源码不允许出现 v-html（security-e2e-test.sh 的 X6 用静态断言钉住这条）
+POST http://localhost:8080/api/employees
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "empNo": "SECX01",
+  "name": "<script>alert(1)</script>",
+  "deptId": 1,
+  "entryDate": "2025-01-01"
+}
+
+### 10.12 CSRF 不适用的证明：只带 Cookie、不带 Authorization 的请求 → 401
+###   （鉴权只认请求头里的 JWT，浏览器不会自动携带 → CSRF 的前提不成立；
+###    如果哪天改成 Cookie 存 token，这个结论立刻失效，必须补 CSRF token）
+GET http://localhost:8080/api/auth/me
+Cookie: token={{adminToken}}
+
+### 10.13 HTTPS 入口（容器形态）：80 → 301 到 443；自签证书；HSTS；/api 同源反代
+###   docker compose up -d --build 后（默认形态下 app 不对外发布端口，唯一入口是 web）
+###   curl -kI https://localhost            → 200 + HSTS + CSP
+###   curl -k  https://localhost/api/depts  → 反代到后端
+###   详细用例见 test-payloads/https-e2e-test.sh（12 条）

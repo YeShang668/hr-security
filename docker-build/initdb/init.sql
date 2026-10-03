@@ -102,9 +102,10 @@ INSERT INTO sys_permission (perm_code, perm_name) VALUES
   ('dept:list', '查看部门'), ('dept:manage', '管理部门'),
   ('employee:sensitive:read', '查看员工敏感信息（身份证/银行卡/工资明文）');
 
--- admin 内置账号（密码 123456 的 BCrypt 密文，由 spring-security-crypto 本地生成）
+-- admin 内置账号（密码 Hr@123456 的 BCrypt 密文，由 spring-security-crypto 本地生成）
+-- 第 8 周安全加固：演示口令由 123456 改为 Hr@123456（原口令过不了"8 位含字母数字"的注册策略）
 INSERT INTO sys_user (username, password, nickname, status) VALUES
-  ('admin', '$2a$10$G6mbJSrSwLMXuHLBPY4cOu0O3lrlo/eoPP0Gpzce2u7kWYhZd0GUS', '管理员', 1);
+  ('admin', '$2a$10$tLalfPvn3o0EcRVDT7eIIegGWCQTgF.yNMQtXWPZpVwANcDHKesh6', '管理员', 1);
 
 INSERT INTO sys_role_permission (role_id, permission_id)
 SELECT r.id, p.id FROM sys_role r, sys_permission p WHERE r.role_code = 'ADMIN';

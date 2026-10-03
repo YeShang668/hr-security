@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# hr-security 本地环境一键回归（全量 176 用例：20+11+25+40+50+30）
+# hr-security 本地环境一键回归（全量 228 用例：20+11+25+40+50+52+30）
 #
 # 前置条件（脚本会先自检，不满足会明确提示）：
 #   1. 本机 MySQL 与 Redis 已启动；
@@ -11,7 +11,8 @@
 # 用法：bash test-payloads/local-e2e-test.sh
 # 说明：脚本会自动注册 zhangsan（幂等）并刷新 admin/emp 登录 token；
 #       keyrotation 会轮换密钥，所以放在最后跑；重跑请重灌 init.sql + 重启应用。
-# 与 docker-e2e-test.sh 的关系：用例完全相同，只是把 MySQL/Redis 命令换成直连本机。
+# 与 docker-e2e-test.sh 的关系：用例基本相同，只是把 MySQL/Redis 命令换成直连本机；
+#   容器脚本额外多一套 https-e2e-test.sh（Nginx/TLS 入口专项，本地没有 Nginx 跑不了）。
 # ============================================
 cd "$(dirname "$0")"
 ROOT="$(cd .. && pwd)"
@@ -51,7 +52,7 @@ curl -s -X POST $API/api/auth/register -H "Content-Type: application/json" --dat
 curl -s -X POST $API/api/auth/login -H "Content-Type: application/json" --data-binary @login-admin.json > admin_login.json
 curl -s -X POST $API/api/auth/login -H "Content-Type: application/json" --data-binary @login-zhangsan.json > emp_login.json
 
-echo "==> [3/3] 全量回归：e2e(20) → redis(11) → user(25) → crypto(40) → audit(50) → keyrotation(30)"
+echo "==> [3/3] 全量回归：e2e(20) → redis(11) → user(25) → crypto(40) → audit(50) → security(52) → keyrotation(30)"
 OUT=$(mktemp)
 TOTAL_PASS=0; TOTAL_FAIL=0; COUNT_MISMATCH=0
 sum_up() { # $1=脚本名 $2=该脚本期望用例数
@@ -66,7 +67,8 @@ sum_up() { # $1=脚本名 $2=该脚本期望用例数
   fi
 }
 for pair in "e2e-test.sh:20" "redis-e2e-test.sh:11" "user-e2e-test.sh:25" \
-            "crypto-e2e-test.sh:40" "audit-e2e-test.sh:50" "keyrotation-e2e-test.sh:30"; do
+            "crypto-e2e-test.sh:40" "audit-e2e-test.sh:50" "security-e2e-test.sh:52" \
+            "keyrotation-e2e-test.sh:30"; do
   SCRIPT="${pair%%:*}"; EXPECT="${pair##*:}"
   (bash "$SCRIPT") 2>&1 | tee "$OUT"
   sum_up "$SCRIPT" "$EXPECT"
@@ -76,7 +78,7 @@ rm -f "$OUT"
 echo
 echo "=========================================="
 echo "本地环境回归结果：PASS=$TOTAL_PASS FAIL=$TOTAL_FAIL"
-if [ "$TOTAL_FAIL" -gt 0 ] || [ "$COUNT_MISMATCH" != "0" ] || [ "$TOTAL_PASS" -ne 176 ]; then
+if [ "$TOTAL_FAIL" -gt 0 ] || [ "$COUNT_MISMATCH" != "0" ] || [ "$TOTAL_PASS" -ne 228 ]; then
   echo "存在失败用例！干净环境重跑：重灌 sql/init.sql → 重启应用 → 再执行本脚本"
   exit 1
 fi

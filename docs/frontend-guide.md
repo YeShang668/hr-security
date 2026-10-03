@@ -54,7 +54,7 @@ npm run dev            # http://localhost:5173
 npm run build          # 生产构建（产物 dist/，本周不做 Docker 化）
 ```
 
-演示账号（种子数据）：`admin / 123456`（管理员，全部菜单）、`zhangsan / 123456`（普通员工，只读）。
+演示账号（种子数据）：`admin / Hr@123456`（管理员，全部菜单）、`zhangsan / Hr@123456`（普通员工，只读）。
 注意 `zhangsan` 需先调后端注册接口创建（见后端 README / 测试脚本），且**角色变更即时生效**：
 
 ```bash

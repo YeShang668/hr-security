@@ -1,0 +1,66 @@
+{
+  "base": "http://localhost:8080",
+  "concurrency": 16,
+  "requests_per_scenario": 300,
+  "results": [
+    {
+      "scenario": "login",
+      "requests": 300,
+      "concurrency": 16,
+      "ok": 300,
+      "failed": 0,
+      "error_rate": 0.0,
+      "wall_s": 1.32,
+      "qps": 227.7,
+      "avg_ms": 68.5,
+      "p50_ms": 67.5,
+      "p95_ms": 77.7,
+      "p99_ms": 90.0,
+      "max_ms": 95.5
+    },
+    {
+      "scenario": "list",
+      "requests": 300,
+      "concurrency": 16,
+      "ok": 300,
+      "failed": 0,
+      "error_rate": 0.0,
+      "wall_s": 0.2,
+      "qps": 1509.1,
+      "avg_ms": 10.3,
+      "p50_ms": 10.1,
+      "p95_ms": 13.9,
+      "p99_ms": 16.0,
+      "max_ms": 29.9
+    },
+    {
+      "scenario": "sensitive",
+      "requests": 300,
+      "concurrency": 16,
+      "ok": 300,
+      "failed": 0,
+      "error_rate": 0.0,
+      "wall_s": 0.13,
+      "qps": 2244.9,
+      "avg_ms": 7.0,
+      "p50_ms": 6.8,
+      "p95_ms": 9.4,
+      "p99_ms": 11.0,
+      "max_ms": 20.3
+    }
+  ],
+  "audit": {
+    "baseline": "500",
+    "expected": 800,
+    "actual": "800",
+    "method_time": {
+      "samples": 800,
+      "avg": 0.9,
+      "p50": 1,
+      "p95": 2,
+      "max": 4
+    },
+    "missing": 0
+  },
+  "at": "2026-10-03 20:18:21"
+}

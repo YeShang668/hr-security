@@ -14,6 +14,7 @@ public enum ResultCode {
     FORBIDDEN(403, "无权限访问"),
     NOT_FOUND(404, "资源不存在"),
     CONFLICT(409, "资源冲突"),
+    TOO_MANY_REQUESTS(429, "尝试次数过多，请稍后再试"),
     ERROR(500, "系统繁忙，请稍后重试");
 
     private final int code;

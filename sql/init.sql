@@ -115,10 +115,12 @@ INSERT INTO sys_permission (perm_code, perm_name) VALUES
   ('dept:list', '查看部门'), ('dept:manage', '管理部门'),
   ('employee:sensitive:read', '查看员工敏感信息（身份证/银行卡/工资明文）');
 
--- admin 内置账号（密码 123456 的 BCrypt 密文，由 spring-security-crypto 本地生成）
+-- admin 内置账号（密码 Hr@123456 的 BCrypt 密文，由 spring-security-crypto 本地生成）
+-- 第 8 周安全加固：演示口令从 123456 改为 Hr@123456 —— 原口令连"8 位含字母数字"的注册口
+-- 令策略都过不了，种子数据却留着一个更弱的口令，属于典型的"策略只在入口卡、内部留后门"。
 -- 注意：注册接口默认分配 EMPLOYEE，ADMIN 角色只能由本种子数据或手动 SQL 授予
 INSERT INTO sys_user (username, password, nickname, status) VALUES
-  ('admin', '$2a$10$G6mbJSrSwLMXuHLBPY4cOu0O3lrlo/eoPP0Gpzce2u7kWYhZd0GUS', '管理员', 1);
+  ('admin', '$2a$10$tLalfPvn3o0EcRVDT7eIIegGWCQTgF.yNMQtXWPZpVwANcDHKesh6', '管理员', 1);
 
 -- 角色-权限绑定：ADMIN 全权限（含 employee:sensitive:read），EMPLOYEE 只读（员工/部门查看，无敏感明文权限）
 INSERT INTO sys_role_permission (role_id, permission_id)

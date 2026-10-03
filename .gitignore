@@ -19,10 +19,15 @@ Thumbs.db
 # 本地手动启动 redis-server 时落在工作目录的持久化文件（数据卷在容器里，不入库）
 dump.rdb
 
+# 第 8 周：自签证书目录绝不入库（含私钥 server.key）。
+# 需要证书时用 docker-build/nginx/gen-cert.sh 生成（脚本入库、产物不入库）
+docker-build/nginx/certs/
+
 # 端到端回归脚本纳入版本管理（第 5 周起，便于他人复现），
 # 但登录 token（*_login.json，含真实 JWT）与日志绝不提交
 test-payloads/*
 !test-payloads/*.sh
+!test-payloads/*.py
 !test-payloads/register.json
 !test-payloads/login-admin.json
 !test-payloads/login-zhangsan.json

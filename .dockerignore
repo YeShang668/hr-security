@@ -15,6 +15,14 @@ sql/
 docs/
 api-test.http
 
-# 前端工程（第 5 周新增）：后端镜像不需要它，且 node_modules/dist 会让构建上下文暴涨。
-# 前端 Docker 化（Nginx 静态托管）留到 10 月 HTTPS 部署周再做。
-hr-ui/
+# 自签证书（第 8 周）：私钥**绝不进构建上下文**。
+# web 容器的证书是运行时以只读卷挂载的（见 docker-compose.yml），不需要也不允许烤进镜像层
+docker-build/nginx/certs/
+
+# 前端工程（第 5 周新增）：后端镜像不需要它。
+# 第 8 周起 frontend 镜像（hr-ui/Dockerfile）也以仓库根为构建上下文，需要 hr-ui 源码，
+# 所以这里不再整个排除 hr-ui/，只排除真正会让上下文暴涨的两项：
+#   - node_modules：几百 MB，且容器内会重新 npm ci（保证与 package-lock 一致）
+#   - dist：本地构建产物，镜像内会重新 npm run build
+hr-ui/node_modules/
+hr-ui/dist/

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hrsecurity.audit.AuditLog;
 import com.hrsecurity.audit.AuditTrace;
 import com.hrsecurity.common.BusinessException;
+import com.hrsecurity.common.LikeUtils;
 import com.hrsecurity.common.PageResult;
 import com.hrsecurity.common.ResultCode;
 import com.hrsecurity.crypto.FieldHashUtil;
@@ -59,9 +60,13 @@ public class EmployeeServiceImpl extends BaseServiceImpl<SysEmployeeMapper, SysE
         // 刻意不支持按手机号/身份证模糊查：那些列是密文，like 匹配不到任何东西，
         // 真需要按身份证查走 searchByIdCard（哈希等值匹配）
         if (StringUtils.hasText(keyword)) {
-            wrapper.and(w -> w.like(SysEmployee::getName, keyword)
+            // 第 8 周：转义 LIKE 通配符。参数化已经防住了"改写 SQL 结构"，
+            // 但 % 和 _ 是值的一部分、参数化拦不住：keyword=% 会命中全表（数据枚举）。
+            // 转义后用户搜什么就是什么（LikeUtils 有详细说明）。
+            String safeKeyword = LikeUtils.escape(keyword);
+            wrapper.and(w -> w.like(SysEmployee::getName, safeKeyword)
                     .or()
-                    .like(SysEmployee::getEmpNo, keyword));
+                    .like(SysEmployee::getEmpNo, safeKeyword));
         }
         if (deptId != null) {
             wrapper.eq(SysEmployee::getDeptId, deptId);
